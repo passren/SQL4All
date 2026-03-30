@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MongoDB PyMongoSQL Query Executor
-Executes SQL queries against MongoDB using PyMongoSQL
+SQL4No Query Executor
+Executes SQL4No queries against MongoDB using PyMongoSQL
 """
 
 import sys

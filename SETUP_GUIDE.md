@@ -1,13 +1,13 @@
-# MongoDB+SQL+VSCode - Setup Guide
+# SQL4No - Setup Guide
 
 ## ✅ Extension Created Successfully!
 
-Your MongoDB+SQL+VSCode extension has been created with all requested features.
+Your SQL4No extension has been created with all requested features.
 
 ## Project Structure
 
 ```
-MongoDB+SQL/
+SQL4No/
 ├── src/
 │   ├── extension.ts          # Main extension logic
 │   └── test/                 # Test files
@@ -57,7 +57,7 @@ The extension will attempt to auto-install these on first query execution.
 
 #### Option A: Debug Mode (Development)
 ```bash
-cd MongoDB+SQL
+cd SQL4No
 npm install
 npm run compile
 ```
@@ -72,7 +72,7 @@ This creates a `.vsix` file you can distribute.
 ### 3. Launch the Query Panel
 
 - **Keyboard Shortcut**: `Ctrl+Shift+M` (Windows/Linux) or `Cmd+Shift+M` (Mac)
-- **Command Palette**: Press `Ctrl+Shift+P` and type "MongoDB PyMongoSQL: Open Query Panel"
+- **Command Palette**: Press `Ctrl+Shift+P` and type "SQL4No: Open Query Panel"
 
 ### 4. Create a MongoDB Connection
 
@@ -157,7 +157,7 @@ Add to your `keybindings.json` for custom shortcuts:
 ```json
 {
   "key": "ctrl+shift+m",
-  "command": "mongodb-pymongosql.openQueryPanel"
+  "command": "sql4no.openQueryPanel"
 }
 ```
 
@@ -215,7 +215,7 @@ setx PATH "%PATH%;C:\Python39"
 
 ### Extension Won't Activate
 - Ensure VS Code version >= 1.110.0
-- Check Output panel for errors: View > Output > MongoDB PyMongoSQL
+- Check Output panel for errors: View > Output > SQL4No
 - Reload window: Ctrl+R
 
 ### Webview Not Loading

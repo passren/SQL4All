@@ -1,7 +1,7 @@
 {
-  "name": "mongodb-sql-vscode",
-  "displayName": "MongoDB+SQL+VSCode",
-  "description": "Query MongoDB using PyMongoSQL SQL syntax",
+  "name": "sql4no",
+  "displayName": "SQL4No",
+  "description": "Query MongoDB using SQL4No syntax",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.110.0"
@@ -9,41 +9,99 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onStartupFinished",
-    "onCommand:mongodb-pymongosql.openQueryPanel"
-  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "mongodb-pymongosql.openQueryPanel",
-        "title": "MongoDB+SQL+VSCode: Open Query Panel",
-        "category": "MongoDB",
+        "command": "sql4no.openQueryPanel",
+        "title": "SQL4No: Open Query Panel",
+        "category": "SQL4No",
         "icon": "$(database)"
+      },
+      {
+        "command": "sql4no.addConnection",
+        "title": "SQL4No: Add Connection",
+        "category": "SQL4No",
+        "icon": "$(add)"
+      },
+      {
+        "command": "sql4no.connectConnection",
+        "title": "SQL4No: Connect",
+        "category": "SQL4No",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "sql4no.editConnection",
+        "title": "SQL4No: Edit Connection",
+        "category": "SQL4No",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "sql4no.deleteConnection",
+        "title": "SQL4No: Delete Connection",
+        "category": "SQL4No",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "sql4no.refreshConnections",
+        "title": "SQL4No: Refresh Connections",
+        "category": "SQL4No",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "mongodb-explorer",
-          "title": "MongoDB",
+          "id": "sql4no-explorer",
+          "title": "SQL4No",
           "icon": "$(database)"
         }
       ]
     },
     "views": {
-      "mongodb-explorer": [
+      "sql4no-explorer": [
         {
-          "id": "mongodb.queryPanel",
-          "name": "Query Tool",
+          "id": "sql4no.connections",
+          "name": "Connections",
+          "icon": "$(database)",
           "when": "true"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "sql4no.addConnection",
+          "when": "view == sql4no.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sql4no.refreshConnections",
+          "when": "view == sql4no.connections",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sql4no.connectConnection",
+          "when": "view == sql4no.connections && viewItem == sql4no.connectionItem",
+          "group": "inline@1"
+        },
+        {
+          "command": "sql4no.editConnection",
+          "when": "view == sql4no.connections && viewItem == sql4no.connectionItem",
+          "group": "inline@2"
+        },
+        {
+          "command": "sql4no.deleteConnection",
+          "when": "view == sql4no.connections && viewItem == sql4no.connectionItem",
+          "group": "inline@3"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "mongodb-pymongosql.openQueryPanel",
+        "command": "sql4no.openQueryPanel",
         "key": "ctrl+shift+m",
         "mac": "cmd+shift+m"
       }

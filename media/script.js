@@ -1,24 +1,26 @@
 const vscode = acquireVsCodeApi();
 
 let currentResults = [];
-let connections = {};
+let activeConnection = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
-    loadConnections();
-    loadHistory();
+    vscode.postMessage({ command: 'ready' });
 });
 
 function setupEventListeners() {
-    // Connection management
-    document.getElementById('saveConnBtn').addEventListener('click', saveConnection);
-    document.getElementById('connectionSelect').addEventListener('change', onConnectionSelect);
-    
     // Query execution
-    document.getElementById('executeBtn').addEventListener('click', executeQuery);
+    document.getElementById('runBtn').addEventListener('click', executeQuery);
     document.getElementById('clearBtn').addEventListener('click', () => {
         document.getElementById('queryEditor').value = '';
+    });
+
+    document.getElementById('queryEditor').addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            event.preventDefault();
+            executeQuery();
+        }
     });
     
     // Export
@@ -29,65 +31,11 @@ function setupEventListeners() {
     window.addEventListener('message', handleMessage);
 }
 
-function saveConnection() {
-    const name = document.getElementById('connName').value.trim();
-    const host = document.getElementById('connHost').value.trim();
-    const port = parseInt(document.getElementById('connPort').value) || 27017;
-    const database = document.getElementById('connDatabase').value.trim();
-    const username = document.getElementById('connUsername').value.trim();
-    const password = document.getElementById('connPassword').value.trim();
-
-    if (!name) {
-        showAlert('Connection name is required', 'error');
-        return;
-    }
-
-    if (!host) {
-        showAlert('Host is required', 'error');
-        return;
-    }
-
-    if (!database) {
-        showAlert('Database is required', 'error');
-        return;
-    }
-
-    vscode.postMessage({
-        command: 'saveConnection',
-        data: {
-            name,
-            host,
-            port,
-            database,
-            username,
-            password
-        }
-    });
-
-    // Clear form
-    document.getElementById('connName').value = '';
-    document.getElementById('connUsername').value = '';
-    document.getElementById('connPassword').value = '';
-    document.getElementById('connDatabase').value = '';
-
-    showAlert('Connection saved successfully', 'success');
-}
-
-function loadConnections() {
-    vscode.postMessage({ command: 'loadConnections' });
-}
-
-function onConnectionSelect() {
-    const selected = document.getElementById('connectionSelect').value;
-    // No special action needed - just stores the selection
-}
-
 function executeQuery() {
-    const selectedConn = document.getElementById('connectionSelect').value;
     const query = document.getElementById('queryEditor').value.trim();
 
-    if (!selectedConn) {
-        showAlert('No connection selected', 'error');
+    if (!activeConnection) {
+        showAlert('Connection is not initialized.', 'error');
         return;
     }
 
@@ -96,29 +44,15 @@ function executeQuery() {
         return;
     }
 
-    const connection = connections[selectedConn];
-    if (!connection) {
-        showAlert('Connection not found', 'error');
-        return;
-    }
-
     // Disable button and show loading state
-    const executeBtn = document.getElementById('executeBtn');
+    const executeBtn = document.getElementById('runBtn');
     const originalText = executeBtn.textContent;
     executeBtn.disabled = true;
     executeBtn.textContent = 'Executing...';
 
     vscode.postMessage({
         command: 'executeQuery',
-        data: {
-            connection: selectedConn,
-            query,
-            host: connection.host,
-            port: connection.port,
-            database: connection.database,
-            username: connection.username,
-            password: connection.password
-        }
+        query
     });
 
     // Reset button after a timeout (will be re-enabled when results arrive)
@@ -200,130 +134,21 @@ function displayResults(data) {
     showAlert(`Query executed successfully. ${currentResults.length} row(s) returned.`, 'success');
 }
 
-function displayConnections(conns) {
-    connections = conns;
-
-    // Update connection select dropdown
-    const select = document.getElementById('connectionSelect');
-    const selectedValue = select.value;
-    select.innerHTML = '<option value="">Select Connection...</option>';
-
-    Object.keys(conns).forEach(name => {
-        const option = document.createElement('option');
-        option.value = name;
-        option.textContent = name;
-        select.appendChild(option);
-    });
-
-    if (selectedValue) {
-        select.value = selectedValue;
-    }
-
-    // Update connections list
-    const list = document.getElementById('connectionsList');
-    if (Object.keys(conns).length === 0) {
-        list.innerHTML = '<p class="placeholder">No connections saved</p>';
-        return;
-    }
-
-    list.innerHTML = '';
-    Object.entries(conns).forEach(([name, conn]) => {
-        const item = document.createElement('div');
-        item.className = 'connection-item';
-
-        const info = document.createElement('div');
-        const nameSpan = document.createElement('div');
-        nameSpan.className = 'connection-item-name';
-        nameSpan.textContent = name;
-
-        const details = document.createElement('div');
-        details.className = 'connection-item-details';
-        details.textContent = `${conn.host}:${conn.port}/${conn.database}`;
-
-        info.appendChild(nameSpan);
-        info.appendChild(details);
-
-        const actions = document.createElement('div');
-        actions.className = 'connection-item-actions';
-
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'btn btn-danger';
-        deleteBtn.textContent = 'Delete';
-        deleteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (confirm(`Delete connection "${name}"?`)) {
-                vscode.postMessage({
-                    command: 'deleteConnection',
-                    name: name
-                });
-            }
-        });
-
-        actions.appendChild(deleteBtn);
-
-        item.appendChild(info);
-        item.appendChild(actions);
-        list.appendChild(item);
-    });
-}
-
-function displayHistory(history) {
-    const list = document.getElementById('historyList');
-
-    if (history.length === 0) {
-        list.innerHTML = '<p class="placeholder">No queries executed yet</p>';
-        return;
-    }
-
-    list.innerHTML = '';
-    history.slice().reverse().forEach((item, idx) => {
-        const historyItem = document.createElement('div');
-        historyItem.className = 'history-item';
-
-        const query = document.createElement('div');
-        query.className = 'history-item-query';
-        query.textContent = item.query;
-
-        const meta = document.createElement('div');
-        meta.className = 'history-item-meta';
-        const timeStr = new Date(item.timestamp).toLocaleString();
-        meta.textContent = `${item.connection} - ${timeStr}${item.resultCount !== undefined ? ` (${item.resultCount} rows)` : ''}`;
-
-        historyItem.appendChild(query);
-        historyItem.appendChild(meta);
-
-        historyItem.addEventListener('click', () => {
-            document.getElementById('queryEditor').value = item.query;
-            document.getElementById('connectionSelect').value = item.connection;
-        });
-
-        list.appendChild(historyItem);
-    });
-}
-
-function loadHistory() {
-    vscode.postMessage({ command: 'loadHistory' });
-}
-
 function handleMessage(event) {
     const message = event.data;
 
     switch (message.command) {
-        case 'connectionSaved':
-            break;
-        case 'connectionsLoaded':
-            displayConnections(message.data);
+        case 'initConnection':
+            activeConnection = message.data;
+            showAlert(`Connected: ${activeConnection.name}`, 'info');
             break;
         case 'queryResults':
             displayResults(message.data);
             break;
         case 'queryError':
             showAlert(`Query Error: ${message.error}`, 'error');
-            document.getElementById('executeBtn').disabled = false;
-            document.getElementById('executeBtn').textContent = 'Execute Query';
-            break;
-        case 'historyLoaded':
-            displayHistory(message.data);
+            document.getElementById('runBtn').disabled = false;
+            document.getElementById('runBtn').textContent = 'Run Query';
             break;
     }
 }
@@ -347,15 +172,11 @@ if (state) {
     if (state.query) {
         document.getElementById('queryEditor').value = state.query;
     }
-    if (state.selectedConnection) {
-        document.getElementById('connectionSelect').value = state.selectedConnection;
-    }
 }
 
 // Save state periodically
 setInterval(() => {
     vscode.setState({
-        query: document.getElementById('queryEditor').value,
-        selectedConnection: document.getElementById('connectionSelect').value
+        query: document.getElementById('queryEditor').value
     });
 }, 1000);
