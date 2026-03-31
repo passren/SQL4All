@@ -45,16 +45,16 @@
                 <div class="section-title">Query Results</div>
                 <div class="result-actions">
                     <span id="resultCount" class="result-count">Rows: 0</span>
+                    <span id="columnCount" class="result-count">Columns: 0</span>
                     <button id="exportCsvBtn" class="btn btn-small">Export CSV</button>
                     <button id="exportJsonBtn" class="btn btn-small">Export JSON</button>
                 </div>
             </div>
+            <div id="resultsStatus" class="results-status results-status-neutral">Ready to query.</div>
             <div id="resultsContainer" class="results-table">
                 <p class="placeholder">Run SQL to view results.</p>
             </div>
         </section>
-
-        <div id="alerts"></div>
     </div>
 
     <script src="${jsPath}"></script>

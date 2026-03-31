@@ -47,6 +47,12 @@
         "title": "SQL4No: Refresh Connections",
         "category": "SQL4No",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "sql4no.selectPythonExecutable",
+        "title": "SQL4No: Select Python Executable",
+        "category": "SQL4No",
+        "icon": "$(symbol-namespace)"
       }
     ],
     "viewsContainers": {
@@ -105,7 +111,17 @@
         "key": "ctrl+shift+m",
         "mac": "cmd+shift+m"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "SQL4No",
+      "properties": {
+        "sql4no.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to Python executable used by SQL4No to create and manage its venv. Example: C:/Users/<user>/AppData/Local/Programs/Python/Python311/python.exe"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

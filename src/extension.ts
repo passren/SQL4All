@@ -3,6 +3,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 
+declare const process: any;
+
 let globalState: vscode.Memento;
 
 interface DbConnection {
@@ -18,6 +20,9 @@ type ConnectionStore = Record<string, DbConnection>;
 const NEW_CONNECTION = '__NEW_CONNECTION__';
 const panelsByConnection = new Map<string, vscode.WebviewPanel>();
 let connectionEditorPanel: vscode.WebviewPanel | undefined;
+let pythonEnvPath: string | undefined;
+let pythonSetupPromise: Promise<string> | undefined;
+let pythonStatusBar: vscode.StatusBarItem | undefined;
 
 class ConnectionItem extends vscode.TreeItem {
 	constructor(
@@ -190,13 +195,25 @@ export function activate(context: vscode.ExtensionContext) {
 		() => connectionTreeProvider.refresh()
 	);
 
+	const selectPythonExecutableDisposable = vscode.commands.registerCommand(
+		'sql4no.selectPythonExecutable',
+		() => selectPythonExecutable(context)
+	);
+
+	const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	statusBar.command = 'sql4no.selectPythonExecutable';
+	pythonStatusBar = statusBar;
+	updatePythonStatusBar();
+
 	context.subscriptions.push(
 		openPanelDisposable,
 		addConnectionDisposable,
 		connectConnectionDisposable,
 		editConnectionDisposable,
 		deleteConnectionDisposable,
-		refreshConnectionsDisposable
+		refreshConnectionsDisposable,
+		selectPythonExecutableDisposable,
+		statusBar
 	);
 
 	console.log('SQL4No extension activated');
@@ -309,7 +326,14 @@ async function handleWebviewMessage(
 			});
 			break;
 		case 'executeQuery':
-			await executeQuery(message.query, connectionName, connection, context, panel);
+			await executeQuery(
+				message.query,
+				message.paramsRaw,
+				connectionName,
+				connection,
+				context,
+				panel
+			);
 			break;
 		case 'exportResults':
 			exportResults(message.data, message.format);
@@ -539,6 +563,7 @@ async function pickConnection(treeProvider: ConnectionTreeProvider): Promise<str
 
 async function executeQuery(
 	queryText: string,
+	paramsRaw: string | undefined,
 	connectionName: string,
 	connection: DbConnection,
 	context: vscode.ExtensionContext,
@@ -570,28 +595,11 @@ async function executeQuery(
 			`--query=${queryText}`
 		];
 
-		// Execute Python script
-		const result = await new Promise<string>((resolve, reject) => {
-			const process = spawn('python', args);
-			let output = '';
-			let errorOutput = '';
+		if (paramsRaw && paramsRaw.trim()) {
+			args.push(`--params=${paramsRaw}`);
+		}
 
-			process.stdout.on('data', (data: any) => {
-				output += data.toString();
-			});
-
-			process.stderr.on('data', (data: any) => {
-				errorOutput += data.toString();
-			});
-
-			process.on('close', (code: number | null) => {
-				if (code !== 0) {
-					reject(new Error(errorOutput || 'Query execution failed'));
-				} else {
-					resolve(output);
-				}
-			});
-		});
+		const result = await runPythonScript(context, args);
 
 		// Parse and send results
 		const results = JSON.parse(result);
@@ -612,6 +620,283 @@ async function executeQuery(
 	}
 }
 
+async function runPythonScript(
+	context: vscode.ExtensionContext,
+	scriptArgs: string[]
+): Promise<string> {
+	const pythonExecutable = await ensurePythonEnvironment(context);
+	return runProcess(pythonExecutable, scriptArgs);
+}
+
+async function ensurePythonEnvironment(context: vscode.ExtensionContext): Promise<string> {
+	if (pythonEnvPath) {
+		return pythonEnvPath;
+	}
+
+	if (pythonSetupPromise) {
+		return pythonSetupPromise;
+	}
+
+	pythonSetupPromise = (async () => {
+		const storageDir = context.globalStorageUri.fsPath;
+		const venvDir = path.join(storageDir, 'python-env');
+		const venvPython = process.platform === 'win32'
+			? path.join(venvDir, 'Scripts', 'python.exe')
+			: path.join(venvDir, 'bin', 'python');
+		const readyMarker = path.join(venvDir, '.sql4no-ready');
+
+		fs.mkdirSync(storageDir, { recursive: true });
+
+		if (!fs.existsSync(venvPython)) {
+			const bootstrap = await resolveSystemPython();
+			await runProcess(bootstrap.command, [...bootstrap.args, '-m', 'venv', venvDir]);
+		}
+
+		if (!fs.existsSync(readyMarker)) {
+			await vscode.window.withProgress(
+				{
+					location: vscode.ProgressLocation.Notification,
+					title: 'SQL4No: preparing Python environment',
+					cancellable: false
+				},
+				async () => {
+					await runProcess(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip']);
+					await runProcess(venvPython, ['-m', 'pip', 'install', 'pymongo', 'pymongosql']);
+				}
+			);
+
+			fs.writeFileSync(readyMarker, new Date().toISOString(), 'utf8');
+		}
+
+		pythonEnvPath = venvPython;
+		updatePythonStatusBar();
+		return venvPython;
+	})().finally(() => {
+		pythonSetupPromise = undefined;
+	});
+
+	return pythonSetupPromise;
+}
+
+async function resolveSystemPython(): Promise<{ command: string; args: string[] }> {
+	const configuredPython = vscode.workspace
+		.getConfiguration('sql4no')
+		.get<string>('pythonPath', '')
+		.trim();
+
+	if (configuredPython) {
+		await runProcess(configuredPython, ['--version']);
+		return { command: configuredPython, args: [] };
+	}
+
+	if (process.platform === 'win32') {
+		for (const candidatePath of getWindowsCandidatePythonPaths()) {
+			if (!fs.existsSync(candidatePath)) {
+				continue;
+			}
+
+			try {
+				await runProcess(candidatePath, ['--version']);
+				return { command: candidatePath, args: [] };
+			} catch {
+				// Continue trying remaining candidates.
+			}
+		}
+	}
+
+	const pythonCommands = process.platform === 'win32'
+		? [
+			{ command: 'python', args: [] as string[] },
+			{ command: 'py', args: ['-3'] },
+			{ command: 'py', args: [] as string[] }
+		]
+		: [
+			{ command: 'python3', args: [] as string[] },
+			{ command: 'python', args: [] as string[] }
+		];
+
+	let lastError = 'Python launcher not found.';
+
+	for (const candidate of pythonCommands) {
+		try {
+			await runProcess(candidate.command, [...candidate.args, '--version']);
+			return candidate;
+		} catch (error: any) {
+			lastError = error?.message || String(error);
+		}
+	}
+
+	if (process.platform === 'win32') {
+		throw new Error(
+			`Cannot find Python. Tried: python, py -3, py. Last error: ${lastError}`
+		);
+	}
+
+	throw new Error(`Cannot find Python. Tried: python3, python. Last error: ${lastError}`);
+}
+
+function updatePythonStatusBar(): void {
+	if (!pythonStatusBar) {
+		return;
+	}
+
+	const configured = vscode.workspace.getConfiguration('sql4no').get<string>('pythonPath', '').trim();
+	if (pythonEnvPath) {
+		pythonStatusBar.text = '$(symbol-namespace) SQL4No: venv';
+		pythonStatusBar.tooltip = `SQL4No Python environment: ${pythonEnvPath}`;
+	} else if (configured) {
+		pythonStatusBar.text = '$(symbol-namespace) SQL4No: Python';
+		pythonStatusBar.tooltip = `SQL4No Python: ${configured}`;
+	} else {
+		pythonStatusBar.text = '$(symbol-namespace) SQL4No: Python (auto)';
+		pythonStatusBar.tooltip = 'SQL4No Python: auto-detected (click to configure)';
+	}
+	pythonStatusBar.show();
+}
+
+async function selectPythonExecutable(context: vscode.ExtensionContext): Promise<void> {
+	const detected = process.platform === 'win32' ? getWindowsCandidatePythonPaths() : [];
+	const existing = detected.filter((candidate) => fs.existsSync(candidate));
+	const current = vscode.workspace
+		.getConfiguration('sql4no')
+		.get<string>('pythonPath', '')
+		.trim();
+
+	const items: Array<vscode.QuickPickItem & { value: string }> = [];
+
+	if (current) {
+		items.push({
+			label: `$(check) Current: ${current}`,
+			description: 'Configured sql4no.pythonPath',
+			value: current
+		});
+	}
+
+	for (const candidate of existing) {
+		items.push({
+			label: candidate,
+			description: 'Detected Python executable',
+			value: candidate
+		});
+	}
+
+	items.push({
+		label: '$(folder-opened) Browse...',
+		description: 'Pick python.exe manually',
+		value: '__BROWSE__'
+	});
+
+	const picked = await vscode.window.showQuickPick(items, {
+		placeHolder: 'Select Python executable for SQL4No'
+	});
+
+	if (!picked) {
+		return;
+	}
+
+	let selectedPath = picked.value;
+	if (selectedPath === '__BROWSE__') {
+		const filePick = await vscode.window.showOpenDialog({
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: false,
+			title: 'Select Python executable',
+			filters: process.platform === 'win32' ? { Executable: ['exe'] } : undefined
+		});
+
+		if (!filePick || filePick.length === 0) {
+			return;
+		}
+
+		selectedPath = filePick[0].fsPath;
+	}
+
+	try {
+		await runProcess(selectedPath, ['--version']);
+		await vscode.workspace
+			.getConfiguration('sql4no')
+			.update('pythonPath', selectedPath, vscode.ConfigurationTarget.Global);
+
+		pythonEnvPath = undefined;
+		pythonSetupPromise = undefined;
+		updatePythonStatusBar();
+		vscode.window.showInformationMessage(`SQL4No Python path set to: ${selectedPath}`);
+	} catch (error: any) {
+		vscode.window.showErrorMessage(
+			`Selected Python executable is invalid: ${error?.message || String(error)}`
+		);
+	}
+}
+
+function getWindowsCandidatePythonPaths(): string[] {
+	const userProfile = process.env.USERPROFILE || '';
+	const localAppData = process.env.LOCALAPPDATA || '';
+	const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+	const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+
+	const baseDirs = [
+		path.join(localAppData, 'Programs', 'Python'),
+		path.join(userProfile, 'AppData', 'Local', 'Programs', 'Python')
+	].filter(Boolean);
+
+	const candidates: string[] = [];
+	for (const baseDir of baseDirs) {
+		if (!fs.existsSync(baseDir)) {
+			continue;
+		}
+
+		for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+			if (!entry.isDirectory()) {
+				continue;
+			}
+
+			if (!/^Python\d+/i.test(entry.name)) {
+				continue;
+			}
+
+			candidates.push(path.join(baseDir, entry.name, 'python.exe'));
+		}
+	}
+
+	candidates.push(
+		path.join(programFiles, 'Python311', 'python.exe'),
+		path.join(programFiles, 'Python310', 'python.exe'),
+		path.join(programFilesX86, 'Python311', 'python.exe'),
+		path.join(programFilesX86, 'Python310', 'python.exe')
+	);
+
+	return Array.from(new Set(candidates));
+}
+
+async function runProcess(command: string, args: string[]): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
+		const child = spawn(command, args);
+		let stdout = '';
+		let stderr = '';
+
+		child.stdout.on('data', (data: any) => {
+			stdout += data.toString();
+		});
+
+		child.stderr.on('data', (data: any) => {
+			stderr += data.toString();
+		});
+
+		child.on('error', (error: any) => {
+			reject(error);
+		});
+
+		child.on('close', (code: number | null) => {
+			if (code !== 0) {
+				reject(new Error(stderr || `${command} exited with code ${code}`));
+				return;
+			}
+
+			resolve(stdout);
+		});
+	});
+}
+
 function saveQueryToHistory(
 	context: vscode.ExtensionContext,
 	connectionName: string,
@@ -619,11 +904,16 @@ function saveQueryToHistory(
 	results: any
 ) {
 	const history = context.globalState.get('mongodb.queryHistory', []) as any[];
+	const resultCount = Array.isArray(results)
+		? results.length
+		: Number.isInteger(results?.rowCount)
+			? results.rowCount
+			: (Array.isArray(results?.rows) ? results.rows.length : (results ? 1 : 0));
 	history.push({
 		query: queryText,
 		connection: connectionName,
 		timestamp: new Date().toISOString(),
-		resultCount: Array.isArray(results) ? results.length : (results ? 1 : 0)
+		resultCount
 	});
 	
 	// Keep only last 50 queries

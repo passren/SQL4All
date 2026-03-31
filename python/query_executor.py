@@ -7,38 +7,52 @@ Executes SQL4No queries against MongoDB using PyMongoSQL
 import sys
 import json
 import argparse
-from typing import Any, List, Dict
+from typing import Any
+from urllib.parse import quote_plus
+
 
 def install_dependencies():
     """Install required Python packages if not available"""
     import subprocess
     packages = ['pymongo', 'pymongosql']
-    
+
     for package in packages:
         try:
             __import__(package)
         except ImportError:
             print(f"Installing {package}...", file=sys.stderr)
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', package])
+            subprocess.check_call(
+                [sys.executable, '-m', 'pip', 'install', package]
+            )
+
 
 # Install dependencies first
 try:
-    import pymongo
-    from pymongosql import Parser
+    import pymongo  # noqa: F401  # type: ignore[import-not-found]
+    from pymongosql import connect  # type: ignore[import-not-found]
+    from pymongosql.cursor import DictCursor  # type: ignore[import-not-found]
 except ImportError:
     install_dependencies()
     try:
-        import pymongo
-        from pymongosql import Parser
+        import pymongo  # noqa: F401  # type: ignore[import-not-found]
+        from pymongosql import connect  # type: ignore[import-not-found]
+        from pymongosql.cursor import (  # type: ignore[import-not-found]
+            DictCursor,
+        )
     except ImportError:
-        print(json.dumps({
-            "error": "Failed to install required packages. Please install pymongo and pymongosql manually.",
-            "results": []
-        }))
+        print(
+            json.dumps(
+                {
+                    "error": (
+                        "Failed to install required packages. "
+                        "Please install pymongo and pymongosql manually."
+                    ),
+                    "results": []
+                }
+            )
+        )
         sys.exit(1)
 
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -51,25 +65,52 @@ def parse_arguments():
     parser.add_argument('--username', default='', help='MongoDB username')
     parser.add_argument('--password', default='', help='MongoDB password')
     parser.add_argument('--query', required=True, help='SQL query to execute')
-    
+
+    parser.add_argument(
+        '--params',
+        default='',
+        help=(
+            'Optional JSON query parameters. '
+            'Supports list (for ?) or object (for :name).'
+        )
+    )
+
     return parser.parse_args()
 
-def connect_mongodb(host: str, port: int, database: str, username: str = '', password: str = ''):
-    """Connect to MongoDB"""
+
+def build_connection_uri(
+    host: str,
+    port: int,
+    database: str,
+    username: str = '',
+    password: str = ''
+) -> str:
+    """Build MongoDB URI for PyMongoSQL connect()."""
+    if username and password:
+        encoded_user = quote_plus(username)
+        encoded_password = quote_plus(password)
+        return (
+            f"mongodb://{encoded_user}:{encoded_password}@{host}:{port}/"
+            f"{database}?authSource={database}"
+        )
+    return f"mongodb://{host}:{port}/{database}"
+
+
+def parse_query_params(params_raw: str) -> Any:
+    """Parse optional JSON parameters for cursor.execute()."""
+    if not params_raw:
+        return None
+
     try:
-        if username and password:
-            connection_string = f"mongodb://{username}:{password}@{host}:{port}/{database}"
-        else:
-            connection_string = f"mongodb://{host}:{port}/{database}"
-        
-        client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
-        # Verify connection
-        client.admin.command('ping')
-        return client[database]
-    except ConnectionFailure as e:
-        raise Exception(f"Failed to connect to MongoDB: {str(e)}")
-    except Exception as e:
-        raise Exception(f"Connection error: {str(e)}")
+        parsed = json.loads(params_raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid --params JSON: {exc}") from exc
+
+    if not isinstance(parsed, (list, dict)):
+        raise ValueError("--params must be a JSON array or object")
+
+    return parsed
+
 
 def serialize_result(obj: Any) -> Any:
     """Serialize MongoDB document for JSON output"""
@@ -81,117 +122,109 @@ def serialize_result(obj: Any) -> Any:
         return [serialize_result(item) for item in obj]
     elif hasattr(obj, 'isoformat'):
         return obj.isoformat()
+    elif isinstance(obj, bytes):
+        return obj.decode('utf-8', errors='replace')
     else:
-        return obj
+        try:
+            json.dumps(obj)
+            return obj
+        except TypeError:
+            return str(obj)
 
-def execute_query(db, sql_query: str) -> List[Dict]:
-    """Execute SQL query and return results"""
+
+def looks_like_result_set_query(sql_query: str) -> bool:
+    """Best-effort detection for SQL statements with tabular output."""
+    normalized = sql_query.strip().lower()
+    return normalized.startswith(('select', 'show', 'describe', 'with'))
+
+
+def execute_query(uri: str, sql_query: str, query_params: Any = None) -> Any:
+    """Execute SQL with PyMongoSQL DB-API and return serializable results."""
     try:
-        # Parse SQL query
-        parser = Parser()
-        parsed = parser.parse(sql_query)
-        
-        # Extract collection name from parsed query
-        collection_name = parsed.get('collection', None)
-        if not collection_name:
-            raise ValueError("Could not determine collection from query")
-        
-        # Get collection
-        collection = db[collection_name]
-        
-        # Build MongoDB query from parsed SQL
-        mongo_query = build_mongo_query(parsed)
-        
-        # Execute query
-        cursor = collection.find(
-            filter=mongo_query.get('filter', {}),
-            projection=mongo_query.get('projection', None),
-            sort=mongo_query.get('sort', None),
-            skip=mongo_query.get('skip', 0),
-            limit=mongo_query.get('limit', 0)
-        )
-        
-        # Convert results to list
-        results = []
-        for doc in cursor:
-            # Remove _id field if not explicitly requested
-            if '_id' not in mongo_query.get('projection', {}):
-                doc.pop('_id', None)
-            results.append(serialize_result(doc))
-        
-        return results
-    
+        with connect(host=uri) as conn:
+            with conn.cursor(DictCursor) as cursor:
+                if query_params is None:
+                    cursor.execute(sql_query)
+                else:
+                    cursor.execute(sql_query, query_params)
+
+                fetched_rows = None
+                try:
+                    fetched_rows = cursor.fetchall()
+                except Exception:
+                    fetched_rows = None
+
+                description_columns = []
+                if cursor.description:
+                    for column in cursor.description:
+                        if isinstance(column, (list, tuple)) and column:
+                            description_columns.append(str(column[0]))
+                        else:
+                            description_columns.append(str(column))
+
+                if (
+                    fetched_rows is not None
+                    or cursor.description
+                    or looks_like_result_set_query(sql_query)
+                ):
+                    rows = fetched_rows or []
+                    serialized_rows = serialize_result(rows)
+                    columns = list(description_columns)
+                    seen = set(columns)
+                    for row in serialized_rows:
+                        if isinstance(row, dict):
+                            for key in row.keys():
+                                if key not in seen:
+                                    seen.add(key)
+                                    columns.append(key)
+
+                    return {
+                        "kind": "result-set",
+                        "rows": serialized_rows,
+                        "columns": columns,
+                        "rowCount": len(serialized_rows),
+                        "message": f"Returned {len(serialized_rows)} row(s)"
+                    }
+
+                return {
+                    "kind": "command-result",
+                    "rows": [],
+                    "columns": [],
+                    "rowCount": 0,
+                    "affectedRows": cursor.rowcount,
+                    "message": "Statement executed successfully"
+                }
+
     except Exception as e:
         raise Exception(f"Query execution error: {str(e)}")
 
-def build_mongo_query(parsed: Dict) -> Dict:
-    """Build MongoDB query from parsed SQL"""
-    query = {
-        'filter': {},
-        'projection': None,
-        'sort': None,
-        'skip': 0,
-        'limit': 0
-    }
-    
-    # Handle WHERE clause
-    if 'where' in parsed and parsed['where']:
-        query['filter'] = convert_where_clause(parsed['where'])
-    
-    # Handle SELECT fields (projection)
-    if 'fields' in parsed and parsed['fields']:
-        query['projection'] = {field: 1 for field in parsed['fields']}
-        query['projection']['_id'] = 0
-    
-    # Handle ORDER BY
-    if 'orderby' in parsed and parsed['orderby']:
-        query['sort'] = [(field, 1 if order.upper() == 'ASC' else -1) 
-                         for field, order in parsed['orderby']]
-    
-    # Handle LIMIT
-    if 'limit' in parsed:
-        query['limit'] = parsed['limit']
-    
-    # Handle OFFSET
-    if 'skip' in parsed:
-        query['skip'] = parsed['skip']
-    
-    return query
-
-def convert_where_clause(where_clause: Any) -> Dict:
-    """Convert WHERE clause to MongoDB filter"""
-    # This is a simplified converter - extend based on your needs
-    if isinstance(where_clause, str):
-        # Simple comparison (this is a placeholder)
-        return {}
-    return {}
 
 def main():
     """Main function"""
     try:
         args = parse_arguments()
-        
-        # Connect to MongoDB
-        db = connect_mongodb(
+
+        uri = build_connection_uri(
             host=args.host,
             port=args.port,
             database=args.database,
             username=args.username,
             password=args.password
         )
-        
-        # Execute query
-        results = execute_query(db, args.query)
-        
+
+        params = parse_query_params(args.params)
+        results = execute_query(uri, args.query, params)
+
         # Output results as JSON
         print(json.dumps(results))
         return 0
-    
+
     except Exception as e:
         # Output error as JSON
         print(json.dumps([]))
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
+
 
 if __name__ == '__main__':
     sys.exit(main())
