@@ -13,6 +13,7 @@ interface DbConnection {
 	database: string;
 	username: string;
 	password: string;
+	additionalParameters?: Record<string, string>;
 }
 
 type ConnectionStore = Record<string, DbConnection>;
@@ -123,7 +124,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 
 			if (selected === NEW_CONNECTION) {
-				await addConnection(connectionTreeProvider);
+				await addConnection(context, connectionTreeProvider);
 				return;
 			}
 
@@ -139,7 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const addConnectionDisposable = vscode.commands.registerCommand(
 		'sql4no.addConnection',
-		() => addConnection(connectionTreeProvider)
+		() => addConnection(context, connectionTreeProvider)
 	);
 
 	const connectConnectionDisposable = vscode.commands.registerCommand(
@@ -161,7 +162,7 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 
-			void openConnectionEditor(connectionTreeProvider, item.connectionName, item.connection);
+			void openConnectionEditor(context, connectionTreeProvider, item.connectionName, item.connection);
 		}
 	);
 
@@ -269,7 +270,7 @@ function updateWebviewContent(
 	const htmlPath = path.join(
 		context.extensionPath,
 		'media',
-		'webview.html'
+		'sql-executor.html'
 	);
 	
 	try {
@@ -277,10 +278,10 @@ function updateWebviewContent(
 		
 		// Replace paths for resources
 		const cssPath = panel.webview.asWebviewUri(
-			vscode.Uri.file(path.join(context.extensionPath, 'media', 'style.css'))
+			vscode.Uri.file(path.join(context.extensionPath, 'media', 'sql-executor.css'))
 		);
 		const jsPath = panel.webview.asWebviewUri(
-			vscode.Uri.file(path.join(context.extensionPath, 'media', 'script.js'))
+			vscode.Uri.file(path.join(context.extensionPath, 'media', 'sql-executor.js'))
 		);
 
 		html = html
@@ -341,11 +342,15 @@ async function handleWebviewMessage(
 	}
 }
 
-async function addConnection(treeProvider: ConnectionTreeProvider): Promise<void> {
-	await openConnectionEditor(treeProvider);
+async function addConnection(
+	context: vscode.ExtensionContext,
+	treeProvider: ConnectionTreeProvider
+): Promise<void> {
+	await openConnectionEditor(context, treeProvider);
 }
 
 async function openConnectionEditor(
+	context: vscode.ExtensionContext,
 	treeProvider: ConnectionTreeProvider,
 	editingName?: string,
 	editingConnection?: DbConnection
@@ -360,7 +365,10 @@ async function openConnectionEditor(
 		vscode.ViewColumn.Active,
 		{
 			enableScripts: true,
-			retainContextWhenHidden: false
+			retainContextWhenHidden: false,
+			localResourceRoots: [
+				vscode.Uri.file(path.join(context.extensionPath, 'media'))
+			]
 		}
 	);
 
@@ -375,7 +383,12 @@ async function openConnectionEditor(
 		}
 	};
 
-	connectionEditorPanel.webview.html = getConnectionEditorHtml(initial, Boolean(editingName));
+	connectionEditorPanel.webview.html = getConnectionEditorHtml(
+		path.join(context.extensionPath, 'media'),
+		connectionEditorPanel.webview,
+		initial,
+		Boolean(editingName)
+	);
 
 	connectionEditorPanel.webview.onDidReceiveMessage(
 		async (message: any) => {
@@ -399,6 +412,7 @@ async function openConnectionEditor(
 				database: string;
 				username: string;
 				password: string;
+				additionalParameters?: Record<string, string>;
 			};
 
 			const name = payload.name.trim();
@@ -435,7 +449,8 @@ async function openConnectionEditor(
 				port,
 				database,
 				username: payload.username?.trim() ?? '',
-				password: payload.password ?? ''
+				password: payload.password ?? '',
+				additionalParameters: payload.additionalParameters ?? {}
 			});
 
 			vscode.window.showInformationMessage(
@@ -453,82 +468,26 @@ async function openConnectionEditor(
 }
 
 function getConnectionEditorHtml(
+	mediaPath: string,
+	webview: vscode.Webview,
 	initial: { name: string; connection: DbConnection },
 	isEdit: boolean
 ): string {
+	const htmlPath = path.join(mediaPath, 'connection-editor.html');
+	const cssPath = webview.asWebviewUri(vscode.Uri.file(path.join(mediaPath, 'connection-editor.css')));
+	const jsPath = webview.asWebviewUri(vscode.Uri.file(path.join(mediaPath, 'connection-editor.js')));
 	const initialJson = JSON.stringify(initial).replace(/</g, '\\u003c');
 
-	return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${isEdit ? 'Edit Connection' : 'New Connection'}</title>
-  <style>
-    body { font-family: Segoe UI, sans-serif; padding: 16px; color: var(--vscode-foreground); }
-    .form { display: grid; gap: 10px; }
-    label { font-size: 12px; color: var(--vscode-descriptionForeground); }
-    input { width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
-    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
-    button { padding: 7px 12px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px; cursor: pointer; }
-    .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-    .secondary { background: var(--vscode-input-background); color: var(--vscode-foreground); }
-    .error { color: var(--vscode-errorForeground); min-height: 18px; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <h2>${isEdit ? 'Update Connection' : 'Create Connection'}</h2>
-  <div class="form">
-    <div><label>Name</label><input id="name" /></div>
-    <div><label>Host</label><input id="host" /></div>
-    <div><label>Port</label><input id="port" type="number" min="1" max="65535" /></div>
-    <div><label>Database</label><input id="database" /></div>
-    <div><label>Username (optional)</label><input id="username" /></div>
-    <div><label>Password (optional)</label><input id="password" type="password" /></div>
-  </div>
-  <div id="error" class="error"></div>
-  <div class="actions">
-    <button id="cancel" class="secondary">Cancel</button>
-    <button id="save" class="primary">${isEdit ? 'Update' : 'Create'}</button>
-  </div>
+	let html = fs.readFileSync(htmlPath, 'utf8');
+	html = html
+		.replace('${title}', isEdit ? 'Edit Connection' : 'New Connection')
+		.replace('${heading}', isEdit ? 'Update Connection' : 'Create Connection')
+		.replace('${saveLabel}', isEdit ? 'Update' : 'Create')
+		.replace('${cssPath}', cssPath.toString())
+		.replace('${jsPath}', jsPath.toString())
+		.replace('${initialJson}', initialJson);
 
-  <script>
-    const vscode = acquireVsCodeApi();
-    const initial = ${initialJson};
-
-    document.getElementById('name').value = initial.name || '';
-    document.getElementById('host').value = initial.connection.host || 'localhost';
-    document.getElementById('port').value = String(initial.connection.port || 27017);
-    document.getElementById('database').value = initial.connection.database || '';
-    document.getElementById('username').value = initial.connection.username || '';
-    document.getElementById('password').value = initial.connection.password || '';
-
-    document.getElementById('save').addEventListener('click', () => {
-      const data = {
-        name: document.getElementById('name').value,
-        host: document.getElementById('host').value,
-        port: Number(document.getElementById('port').value),
-        database: document.getElementById('database').value,
-        username: document.getElementById('username').value,
-        password: document.getElementById('password').value,
-      };
-
-      vscode.postMessage({ command: 'save', data });
-    });
-
-    document.getElementById('cancel').addEventListener('click', () => {
-      vscode.postMessage({ command: 'cancel' });
-    });
-
-    window.addEventListener('message', (event) => {
-      const message = event.data;
-      if (message.command === 'saveError') {
-        document.getElementById('error').textContent = message.error || 'Save failed.';
-      }
-    });
-  </script>
-</body>
-</html>`;
+	return html;
 }
 
 async function pickConnection(treeProvider: ConnectionTreeProvider): Promise<string | undefined> {
@@ -594,6 +553,11 @@ async function executeQuery(
 			`--password=${connection.password}`,
 			`--query=${queryText}`
 		];
+
+		const additionalParameters = connection.additionalParameters ?? {};
+		if (Object.keys(additionalParameters).length > 0) {
+			args.push(`--connection-options=${JSON.stringify(additionalParameters)}`);
+		}
 
 		if (paramsRaw && paramsRaw.trim()) {
 			args.push(`--params=${paramsRaw}`);

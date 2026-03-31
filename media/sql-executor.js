@@ -2,6 +2,12 @@ const vscode = acquireVsCodeApi();
 
 let currentResults = [];
 let activeConnection = null;
+let paneLayout = {
+    queryPaneHeight: null
+};
+
+const MIN_QUERY_PANE_HEIGHT = 80;
+const MIN_RESULTS_PANE_HEIGHT = 140;
 
 function getResultsContainer() {
     return document.getElementById('resultsContainer');
@@ -185,8 +191,107 @@ function resetRunButton(label = 'Run') {
     runBtn.textContent = label;
 }
 
+function getContainerGap(container) {
+    const styles = window.getComputedStyle(container);
+    const gapValue = styles.rowGap && styles.rowGap !== 'normal' ? styles.rowGap : styles.gap;
+    const parsed = parseFloat(gapValue || '0');
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function setupPaneResizer(initialHeight) {
+    const container = document.querySelector('.container');
+    const header = document.querySelector('.header');
+    const queryPane = document.querySelector('.query-pane');
+    const resultsPane = document.querySelector('.results-pane');
+    const divider = document.getElementById('paneDivider');
+
+    if (!container || !header || !queryPane || !resultsPane || !divider) {
+        return;
+    }
+
+    const clampQueryHeight = (height) => {
+        const gap = getContainerGap(container);
+        const containerHeight = container.clientHeight;
+        const headerHeight = header.getBoundingClientRect().height;
+        const dividerHeight = divider.getBoundingClientRect().height;
+        const availablePaneHeight = containerHeight - headerHeight - dividerHeight - (gap * 3);
+        const maxQueryHeight = Math.max(MIN_QUERY_PANE_HEIGHT, availablePaneHeight - MIN_RESULTS_PANE_HEIGHT);
+
+        return Math.min(Math.max(height, MIN_QUERY_PANE_HEIGHT), maxQueryHeight);
+    };
+
+    const applyQueryHeight = (height) => {
+        const clampedHeight = clampQueryHeight(height);
+        queryPane.style.flex = `0 0 ${clampedHeight}px`;
+        paneLayout.queryPaneHeight = clampedHeight;
+    };
+
+    const resetQueryHeight = () => {
+        queryPane.style.flex = '';
+        paneLayout.queryPaneHeight = null;
+    };
+
+    if (typeof initialHeight === 'number' && Number.isFinite(initialHeight)) {
+        applyQueryHeight(initialHeight);
+    }
+
+    let isDragging = false;
+    let dragStartY = 0;
+    let dragStartHeight = 0;
+    let activePointerId = null;
+
+    const stopDragging = () => {
+        if (!isDragging) {
+            return;
+        }
+
+        isDragging = false;
+        divider.classList.remove('is-dragging');
+        document.body.classList.remove('is-resizing');
+        if (activePointerId !== null && divider.hasPointerCapture?.(activePointerId)) {
+            divider.releasePointerCapture(activePointerId);
+        }
+        activePointerId = null;
+    };
+
+    divider.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        isDragging = true;
+        dragStartY = event.clientY;
+        dragStartHeight = queryPane.getBoundingClientRect().height;
+        activePointerId = event.pointerId;
+        divider.classList.add('is-dragging');
+        document.body.classList.add('is-resizing');
+        divider.setPointerCapture(event.pointerId);
+    });
+
+    divider.addEventListener('pointermove', (event) => {
+        if (!isDragging) {
+            return;
+        }
+
+        const deltaY = event.clientY - dragStartY;
+        applyQueryHeight(dragStartHeight + deltaY);
+    });
+
+    divider.addEventListener('pointerup', stopDragging);
+    divider.addEventListener('pointercancel', stopDragging);
+
+    divider.addEventListener('dblclick', () => {
+        stopDragging();
+        resetQueryHeight();
+    });
+
+    window.addEventListener('resize', () => {
+        if (typeof paneLayout.queryPaneHeight === 'number') {
+            applyQueryHeight(paneLayout.queryPaneHeight);
+        }
+    });
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    setupPaneResizer(paneLayout.queryPaneHeight);
     setupEventListeners();
     setExportState(false);
     setResultMetrics(0, 0);
@@ -295,11 +400,15 @@ if (state) {
     if (state.query) {
         document.getElementById('queryEditor').value = state.query;
     }
+    if (typeof state.queryPaneHeight === 'number' && Number.isFinite(state.queryPaneHeight)) {
+        paneLayout.queryPaneHeight = state.queryPaneHeight;
+    }
 }
 
 // Save state periodically
 setInterval(() => {
     vscode.setState({
-        query: document.getElementById('queryEditor').value
+        query: document.getElementById('queryEditor').value,
+        queryPaneHeight: paneLayout.queryPaneHeight
     });
 }, 1000);

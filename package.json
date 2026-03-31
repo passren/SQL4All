@@ -1,7 +1,7 @@
 {
   "name": "sql4no",
   "displayName": "SQL4No",
-  "description": "Query MongoDB using SQL4No syntax",
+  "description": "Query NoSQL Database using SQL syntax",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.110.0"

@@ -8,7 +8,7 @@ import sys
 import json
 import argparse
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
 
 def install_dependencies():
@@ -65,6 +65,14 @@ def parse_arguments():
     parser.add_argument('--username', default='', help='MongoDB username')
     parser.add_argument('--password', default='', help='MongoDB password')
     parser.add_argument('--query', required=True, help='SQL query to execute')
+    parser.add_argument(
+        '--connection-options',
+        default='',
+        help=(
+            'Optional JSON object with additional MongoDB URI '
+            'query parameters'
+        )
+    )
 
     parser.add_argument(
         '--params',
@@ -83,17 +91,48 @@ def build_connection_uri(
     port: int,
     database: str,
     username: str = '',
-    password: str = ''
+    password: str = '',
+    connection_options: dict[str, Any] | None = None
 ) -> str:
     """Build MongoDB URI for PyMongoSQL connect()."""
+    query_options: dict[str, str] = {}
+    if connection_options:
+        query_options = {
+            str(key): '' if value is None else str(value)
+            for key, value in connection_options.items()
+        }
+
     if username and password:
         encoded_user = quote_plus(username)
         encoded_password = quote_plus(password)
-        return (
-            f"mongodb://{encoded_user}:{encoded_password}@{host}:{port}/"
-            f"{database}?authSource={database}"
+        query_options.setdefault('authSource', database)
+        base = (
+            f"mongodb://{encoded_user}:{encoded_password}"
+            f"@{host}:{port}/{database}"
         )
-    return f"mongodb://{host}:{port}/{database}"
+    else:
+        base = f"mongodb://{host}:{port}/{database}"
+
+    if query_options:
+        return f"{base}?{urlencode(query_options)}"
+
+    return base
+
+
+def parse_connection_options(connection_options_raw: str) -> dict[str, Any]:
+    """Parse optional JSON connection options for MongoDB URI query string."""
+    if not connection_options_raw:
+        return {}
+
+    try:
+        parsed = json.loads(connection_options_raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid --connection-options JSON: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError("--connection-options must be a JSON object")
+
+    return parsed
 
 
 def parse_query_params(params_raw: str) -> Any:
@@ -209,7 +248,10 @@ def main():
             port=args.port,
             database=args.database,
             username=args.username,
-            password=args.password
+            password=args.password,
+            connection_options=parse_connection_options(
+                args.connection_options
+            )
         )
 
         params = parse_query_params(args.params)
