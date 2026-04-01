@@ -18,6 +18,14 @@ interface DbConnection {
 
 type ConnectionStore = Record<string, DbConnection>;
 
+const EXTENSION_NAMESPACE = 'sql4all';
+const BRAND_NAME = 'SQL4ALL';
+const CONNECTION_VIEW_ID = `${EXTENSION_NAMESPACE}.connections`;
+const CONNECTION_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.connectionItem`;
+const CONNECTION_STORE_KEY = `${EXTENSION_NAMESPACE}.connections`;
+const PYTHON_SETTING_KEY = 'pythonPath';
+const READY_MARKER_FILE = '.sql4all-ready';
+
 const NEW_CONNECTION = '__NEW_CONNECTION__';
 const panelsByConnection = new Map<string, vscode.WebviewPanel>();
 let connectionEditorPanel: vscode.WebviewPanel | undefined;
@@ -33,10 +41,10 @@ class ConnectionItem extends vscode.TreeItem {
 		super(connectionName, vscode.TreeItemCollapsibleState.None);
 		this.description = `${connection.host}:${connection.port}/${connection.database}`;
 		this.tooltip = `${connectionName}\n${connection.host}:${connection.port}\nDB: ${connection.database}`;
-		this.contextValue = 'sql4no.connectionItem';
+		this.contextValue = CONNECTION_ITEM_CONTEXT;
 		this.iconPath = new vscode.ThemeIcon('database');
 		this.command = {
-			command: 'sql4no.connectConnection',
+			command: `${EXTENSION_NAMESPACE}.connectConnection`,
 			title: 'Connect',
 			arguments: [this]
 		};
@@ -65,19 +73,12 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<ConnectionItem> 
 	}
 
 	getConnections(): ConnectionStore {
-		const current = this.context.globalState.get('sql4no.connections');
-		if (current) {
-			return current as ConnectionStore;
-		}
-
-		// Backward compatibility for existing users.
-		const legacy = this.context.globalState.get('mongodb.connections', {}) as ConnectionStore;
-		return legacy;
+		const current = this.context.globalState.get(CONNECTION_STORE_KEY);
+		return (current as ConnectionStore | undefined) ?? {};
 	}
 
 	async saveConnections(connections: ConnectionStore): Promise<void> {
-		await this.context.globalState.update('sql4no.connections', connections);
-		await this.context.globalState.update('mongodb.connections', connections);
+		await this.context.globalState.update(CONNECTION_STORE_KEY, connections);
 		this.refresh();
 	}
 
@@ -102,21 +103,12 @@ export function activate(context: vscode.ExtensionContext) {
 	globalState = context.globalState;
 	const connectionTreeProvider = new ConnectionTreeProvider(context);
 
-	// Migrate legacy key to new key if needed.
-	const hasNewStore = context.globalState.get('sql4no.connections') !== undefined;
-	if (!hasNewStore) {
-		const legacy = context.globalState.get('mongodb.connections');
-		if (legacy) {
-			void context.globalState.update('sql4no.connections', legacy);
-		}
-	}
-
 	context.subscriptions.push(
-		vscode.window.registerTreeDataProvider('sql4no.connections', connectionTreeProvider)
+		vscode.window.registerTreeDataProvider(CONNECTION_VIEW_ID, connectionTreeProvider)
 	);
 
 	const openPanelDisposable = vscode.commands.registerCommand(
-		'sql4no.openQueryPanel',
+		`${EXTENSION_NAMESPACE}.openQueryPanel`,
 		async () => {
 			const selected = await pickConnection(connectionTreeProvider);
 			if (!selected) {
@@ -139,15 +131,15 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	const addConnectionDisposable = vscode.commands.registerCommand(
-		'sql4no.addConnection',
+		`${EXTENSION_NAMESPACE}.addConnection`,
 		() => addConnection(context, connectionTreeProvider)
 	);
 
 	const connectConnectionDisposable = vscode.commands.registerCommand(
-		'sql4no.connectConnection',
+		`${EXTENSION_NAMESPACE}.connectConnection`,
 		(item?: ConnectionItem) => {
 			if (!item) {
-				void vscode.commands.executeCommand('sql4no.openQueryPanel');
+				void vscode.commands.executeCommand(`${EXTENSION_NAMESPACE}.openQueryPanel`);
 				return;
 			}
 
@@ -156,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	const editConnectionDisposable = vscode.commands.registerCommand(
-		'sql4no.editConnection',
+		`${EXTENSION_NAMESPACE}.editConnection`,
 		(item?: ConnectionItem) => {
 			if (!item) {
 				return;
@@ -167,7 +159,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	const deleteConnectionDisposable = vscode.commands.registerCommand(
-		'sql4no.deleteConnection',
+		`${EXTENSION_NAMESPACE}.deleteConnection`,
 		async (item?: ConnectionItem) => {
 			if (!item) {
 				return;
@@ -192,17 +184,17 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	const refreshConnectionsDisposable = vscode.commands.registerCommand(
-		'sql4no.refreshConnections',
+		`${EXTENSION_NAMESPACE}.refreshConnections`,
 		() => connectionTreeProvider.refresh()
 	);
 
 	const selectPythonExecutableDisposable = vscode.commands.registerCommand(
-		'sql4no.selectPythonExecutable',
+		`${EXTENSION_NAMESPACE}.selectPythonExecutable`,
 		() => selectPythonExecutable(context)
 	);
 
 	const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-	statusBar.command = 'sql4no.selectPythonExecutable';
+	statusBar.command = `${EXTENSION_NAMESPACE}.selectPythonExecutable`;
 	pythonStatusBar = statusBar;
 	updatePythonStatusBar();
 
@@ -217,7 +209,7 @@ export function activate(context: vscode.ExtensionContext) {
 		statusBar
 	);
 
-	console.log('SQL4No extension activated');
+	console.log(`${BRAND_NAME} extension activated`);
 }
 
 function createOrShowPanel(
@@ -232,8 +224,8 @@ function createOrShowPanel(
 	}
 
 	const panel = vscode.window.createWebviewPanel(
-		'sql4noQuery',
-		`SQL4No - ${connectionName}`,
+		'sql4allQuery',
+		`${BRAND_NAME} - ${connectionName}`,
 		vscode.ViewColumn.Beside,
 		{
 			enableScripts: true,
@@ -372,7 +364,7 @@ async function openConnectionEditor(
 	}
 
 	connectionEditorPanel = vscode.window.createWebviewPanel(
-		'sql4noConnectionEditor',
+		'sql4allConnectionEditor',
 		editingName ? `Edit Connection - ${editingName}` : 'New Connection',
 		vscode.ViewColumn.Active,
 		{
@@ -646,7 +638,7 @@ async function ensurePythonEnvironment(context: vscode.ExtensionContext): Promis
 		const venvPython = process.platform === 'win32'
 			? path.join(venvDir, 'Scripts', 'python.exe')
 			: path.join(venvDir, 'bin', 'python');
-		const readyMarker = path.join(venvDir, '.sql4no-ready');
+		const readyMarker = path.join(venvDir, READY_MARKER_FILE);
 
 		fs.mkdirSync(storageDir, { recursive: true });
 
@@ -659,7 +651,7 @@ async function ensurePythonEnvironment(context: vscode.ExtensionContext): Promis
 			await vscode.window.withProgress(
 				{
 					location: vscode.ProgressLocation.Notification,
-					title: 'SQL4No: preparing Python environment',
+					title: `${BRAND_NAME}: preparing Python environment`,
 					cancellable: false
 				},
 				async () => {
@@ -682,10 +674,7 @@ async function ensurePythonEnvironment(context: vscode.ExtensionContext): Promis
 }
 
 async function resolveSystemPython(): Promise<{ command: string; args: string[] }> {
-	const configuredPython = vscode.workspace
-		.getConfiguration('sql4no')
-		.get<string>('pythonPath', '')
-		.trim();
+	const configuredPython = getConfiguredPythonPath();
 
 	if (configuredPython) {
 		await runProcess(configuredPython, ['--version']);
@@ -743,16 +732,16 @@ function updatePythonStatusBar(): void {
 		return;
 	}
 
-	const configured = vscode.workspace.getConfiguration('sql4no').get<string>('pythonPath', '').trim();
+	const configured = getConfiguredPythonPath();
 	if (pythonEnvPath) {
-		pythonStatusBar.text = '$(symbol-namespace) SQL4No: venv';
-		pythonStatusBar.tooltip = `SQL4No Python environment: ${pythonEnvPath}`;
+		pythonStatusBar.text = `$(symbol-namespace) ${BRAND_NAME}: venv`;
+		pythonStatusBar.tooltip = `${BRAND_NAME} Python environment: ${pythonEnvPath}`;
 	} else if (configured) {
-		pythonStatusBar.text = '$(symbol-namespace) SQL4No: Python';
-		pythonStatusBar.tooltip = `SQL4No Python: ${configured}`;
+		pythonStatusBar.text = `$(symbol-namespace) ${BRAND_NAME}: Python`;
+		pythonStatusBar.tooltip = `${BRAND_NAME} Python: ${configured}`;
 	} else {
-		pythonStatusBar.text = '$(symbol-namespace) SQL4No: Python (auto)';
-		pythonStatusBar.tooltip = 'SQL4No Python: auto-detected (click to configure)';
+		pythonStatusBar.text = `$(symbol-namespace) ${BRAND_NAME}: Python (auto)`;
+		pythonStatusBar.tooltip = `${BRAND_NAME} Python: auto-detected (click to configure)`;
 	}
 	pythonStatusBar.show();
 }
@@ -760,17 +749,14 @@ function updatePythonStatusBar(): void {
 async function selectPythonExecutable(context: vscode.ExtensionContext): Promise<void> {
 	const detected = process.platform === 'win32' ? getWindowsCandidatePythonPaths() : [];
 	const existing = detected.filter((candidate) => fs.existsSync(candidate));
-	const current = vscode.workspace
-		.getConfiguration('sql4no')
-		.get<string>('pythonPath', '')
-		.trim();
+	const current = getConfiguredPythonPath();
 
 	const items: Array<vscode.QuickPickItem & { value: string }> = [];
 
 	if (current) {
 		items.push({
 			label: `$(check) Current: ${current}`,
-			description: 'Configured sql4no.pythonPath',
+			description: `Configured ${EXTENSION_NAMESPACE}.pythonPath`,
 			value: current
 		});
 	}
@@ -790,7 +776,7 @@ async function selectPythonExecutable(context: vscode.ExtensionContext): Promise
 	});
 
 	const picked = await vscode.window.showQuickPick(items, {
-		placeHolder: 'Select Python executable for SQL4No'
+		placeHolder: `Select Python executable for ${BRAND_NAME}`
 	});
 
 	if (!picked) {
@@ -817,18 +803,25 @@ async function selectPythonExecutable(context: vscode.ExtensionContext): Promise
 	try {
 		await runProcess(selectedPath, ['--version']);
 		await vscode.workspace
-			.getConfiguration('sql4no')
-			.update('pythonPath', selectedPath, vscode.ConfigurationTarget.Global);
+			.getConfiguration(EXTENSION_NAMESPACE)
+			.update(PYTHON_SETTING_KEY, selectedPath, vscode.ConfigurationTarget.Global);
 
 		pythonEnvPath = undefined;
 		pythonSetupPromise = undefined;
 		updatePythonStatusBar();
-		vscode.window.showInformationMessage(`SQL4No Python path set to: ${selectedPath}`);
+		vscode.window.showInformationMessage(`${BRAND_NAME} Python path set to: ${selectedPath}`);
 	} catch (error: any) {
 		vscode.window.showErrorMessage(
 			`Selected Python executable is invalid: ${error?.message || String(error)}`
 		);
 	}
+}
+
+function getConfiguredPythonPath(): string {
+	return vscode.workspace
+		.getConfiguration(EXTENSION_NAMESPACE)
+		.get<string>(PYTHON_SETTING_KEY, '')
+		.trim();
 }
 
 function getWindowsCandidatePythonPaths(): string[] {

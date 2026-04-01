@@ -1,4 +1,4 @@
-# SQL4No
+# SQL4ALL
 
 A powerful VS Code extension for querying MongoDB using PyMongoSQL SQL syntax. Write SQL queries and execute them against MongoDB without writing complex aggregation pipelines.
 
@@ -30,7 +30,7 @@ The extension automatically installs required Python packages:
 ### From VS Code Marketplace
 1. Open VS Code
 2. Go to Extensions (Ctrl+Shift+X / Cmd+Shift+X)
-3. Search for "SQL4No"
+3. Search for "SQL4ALL"
 4. Click Install
 
 ## Quick Start

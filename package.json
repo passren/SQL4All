@@ -1,6 +1,6 @@
 {
-  "name": "sql4no",
-  "displayName": "SQL4No",
+  "name": "sql4all",
+  "displayName": "SQL4ALL",
   "description": "Query NoSQL Database using SQL syntax",
   "version": "0.0.1",
   "engines": {
@@ -13,61 +13,61 @@
   "contributes": {
     "commands": [
       {
-        "command": "sql4no.openQueryPanel",
-        "title": "SQL4No: Open Query Panel",
-        "category": "SQL4No",
+        "command": "sql4all.openQueryPanel",
+        "title": "SQL4ALL: Open Query Panel",
+        "category": "SQL4ALL",
         "icon": "$(database)"
       },
       {
-        "command": "sql4no.addConnection",
-        "title": "SQL4No: Add Connection",
-        "category": "SQL4No",
+        "command": "sql4all.addConnection",
+        "title": "SQL4ALL: Add Connection",
+        "category": "SQL4ALL",
         "icon": "$(add)"
       },
       {
-        "command": "sql4no.connectConnection",
-        "title": "SQL4No: Connect",
-        "category": "SQL4No",
+        "command": "sql4all.connectConnection",
+        "title": "SQL4ALL: Connect",
+        "category": "SQL4ALL",
         "icon": "$(plug)"
       },
       {
-        "command": "sql4no.editConnection",
-        "title": "SQL4No: Edit Connection",
-        "category": "SQL4No",
+        "command": "sql4all.editConnection",
+        "title": "SQL4ALL: Edit Connection",
+        "category": "SQL4ALL",
         "icon": "$(edit)"
       },
       {
-        "command": "sql4no.deleteConnection",
-        "title": "SQL4No: Delete Connection",
-        "category": "SQL4No",
+        "command": "sql4all.deleteConnection",
+        "title": "SQL4ALL: Delete Connection",
+        "category": "SQL4ALL",
         "icon": "$(trash)"
       },
       {
-        "command": "sql4no.refreshConnections",
-        "title": "SQL4No: Refresh Connections",
-        "category": "SQL4No",
+        "command": "sql4all.refreshConnections",
+        "title": "SQL4ALL: Refresh Connections",
+        "category": "SQL4ALL",
         "icon": "$(refresh)"
       },
       {
-        "command": "sql4no.selectPythonExecutable",
-        "title": "SQL4No: Select Python Executable",
-        "category": "SQL4No",
+        "command": "sql4all.selectPythonExecutable",
+        "title": "SQL4ALL: Select Python Executable",
+        "category": "SQL4ALL",
         "icon": "$(symbol-namespace)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "sql4no-explorer",
-          "title": "SQL4No",
+          "id": "sql4all-explorer",
+          "title": "SQL4ALL",
           "icon": "$(database)"
         }
       ]
     },
     "views": {
-      "sql4no-explorer": [
+      "sql4all-explorer": [
         {
-          "id": "sql4no.connections",
+          "id": "sql4all.connections",
           "name": "Connections",
           "icon": "$(database)",
           "when": "true"
@@ -77,48 +77,48 @@
     "menus": {
       "view/title": [
         {
-          "command": "sql4no.addConnection",
-          "when": "view == sql4no.connections",
+          "command": "sql4all.addConnection",
+          "when": "view == sql4all.connections",
           "group": "navigation@1"
         },
         {
-          "command": "sql4no.refreshConnections",
-          "when": "view == sql4no.connections",
+          "command": "sql4all.refreshConnections",
+          "when": "view == sql4all.connections",
           "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "sql4no.connectConnection",
-          "when": "view == sql4no.connections && viewItem == sql4no.connectionItem",
+          "command": "sql4all.connectConnection",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
           "group": "inline@1"
         },
         {
-          "command": "sql4no.editConnection",
-          "when": "view == sql4no.connections && viewItem == sql4no.connectionItem",
+          "command": "sql4all.editConnection",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
           "group": "inline@2"
         },
         {
-          "command": "sql4no.deleteConnection",
-          "when": "view == sql4no.connections && viewItem == sql4no.connectionItem",
+          "command": "sql4all.deleteConnection",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
           "group": "inline@3"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "sql4no.openQueryPanel",
+        "command": "sql4all.openQueryPanel",
         "key": "ctrl+shift+m",
         "mac": "cmd+shift+m"
       }
     ],
     "configuration": {
-      "title": "SQL4No",
+      "title": "SQL4ALL",
       "properties": {
-        "sql4no.pythonPath": {
+        "sql4all.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to Python executable used by SQL4No to create and manage its venv. Example: C:/Users/<user>/AppData/Local/Programs/Python/Python311/python.exe"
+          "description": "Absolute path to Python executable used by SQL4ALL to create and manage its venv. Example: C:/Users/<user>/AppData/Local/Programs/Python/Python311/python.exe"
         }
       }
     }

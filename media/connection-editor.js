@@ -1,5 +1,5 @@
 const vscode = acquireVsCodeApi();
-const initial = window.__SQL4NO_CONNECTION_EDITOR__ || {
+const initial = window.__SQL4ALL_CONNECTION_EDITOR__ || {
   name: '',
   connection: {
     host: 'localhost',

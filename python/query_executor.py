@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SQL4No Query Executor
-Executes SQL4No queries against MongoDB using PyMongoSQL
+SQL4ALL Query Executor
+Executes SQL4ALL queries against MongoDB using PyMongoSQL
 """
 
 import sys
