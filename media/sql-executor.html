@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SQL4No Query</title>
     <link rel="stylesheet" href="${cssPath}">
+    <link rel="stylesheet" href="${cmCssPath}">
 </head>
 <body>
     <div class="container">
         <header class="header">
             <div>
-                <h1>SQL4No</h1>
-                <p class="subtitle">${connectionName} · ${connectionHost}:${connectionPort} / ${databaseName}</p>
+                <h3>${connectionName} · ${connectionHost}:${connectionPort} / ${databaseName}</h3>
             </div>
         </header>
 
@@ -23,7 +23,7 @@
                         <span class="icon" aria-hidden="true">
                             <svg viewBox="0 0 16 16" focusable="false"><path d="M3 2.5v11l10-5.5-10-5.5z"/></svg>
                         </span>
-                        <span>Run</span>
+                        <span class="btn-label">Run</span>
                     </button>
                     <button id="clearBtn" class="btn btn-small btn-icon" title="Clear SQL">
                         <span class="icon" aria-hidden="true">
@@ -33,11 +33,7 @@
                     </button>
                 </div>
             </div>
-            <textarea
-                id="queryEditor"
-                placeholder="SELECT * FROM users LIMIT 20"
-                spellcheck="false"
-            ></textarea>
+            <div id="queryEditor" class="query-editor-wrap"></div>
         </section>
 
         <div id="paneDivider" class="pane-divider" role="separator" aria-orientation="horizontal" aria-label="Resize editor and results panes"></div>
@@ -45,6 +41,10 @@
         <section class="results-pane">
             <div class="results-header">
                 <div class="section-title">Query Results</div>
+                <div class="results-tabs" role="tablist" aria-label="Result views">
+                    <button id="resultsTabTable" class="results-tab is-active" role="tab" aria-selected="true" aria-controls="resultsContainer" type="button">Table</button>
+                    <button id="resultsTabJson" class="results-tab" role="tab" aria-selected="false" aria-controls="resultsJsonWrap" type="button">JSON</button>
+                </div>
                 <div class="result-actions">
                     <span id="resultCount" class="result-count">Rows: 0</span>
                     <span id="columnCount" class="result-count">Columns: 0</span>
@@ -52,13 +52,22 @@
                     <button id="exportJsonBtn" class="btn btn-small">Export JSON</button>
                 </div>
             </div>
-            <div id="resultsStatus" class="results-status results-status-neutral">Ready to query.</div>
-            <div id="resultsContainer" class="results-table">
-                <p class="placeholder">Run SQL to view results.</p>
+
+            <div class="results-content">
+                <div id="resultsContainer" class="results-table results-panel is-active" role="tabpanel" aria-labelledby="resultsTabTable">
+                    <p class="placeholder">Run SQL to view results.</p>
+                </div>
+                <div id="resultsJsonWrap" class="results-json-wrap results-panel" role="tabpanel" aria-labelledby="resultsTabJson">
+                    <button id="copyJsonBtn" class="btn btn-small copy-json-btn" title="Copy JSON" type="button">Copy</button>
+                    <pre id="resultsJsonContainer" class="results-json">{"message": "Run SQL to view results"}</pre>
+                </div>
             </div>
+            <div id="resultsStatus" class="results-status results-status-neutral">Ready to query.</div>
         </section>
     </div>
 
+    <script src="${cmJsPath}"></script>
+    <script src="${cmSqlPath}"></script>
     <script src="${jsPath}"></script>
 </body>
 </html>

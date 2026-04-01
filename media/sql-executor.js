@@ -2,6 +2,8 @@ const vscode = acquireVsCodeApi();
 
 let currentResults = [];
 let activeConnection = null;
+let activeResultTab = 'table';
+let sqlEditor = null;
 let paneLayout = {
     queryPaneHeight: null
 };
@@ -11,6 +13,67 @@ const MIN_RESULTS_PANE_HEIGHT = 140;
 
 function getResultsContainer() {
     return document.getElementById('resultsContainer');
+}
+
+function getResultsJsonContainer() {
+    return document.getElementById('resultsJsonContainer');
+}
+
+function getResultsJsonWrap() {
+    return document.getElementById('resultsJsonWrap');
+}
+
+function setActiveResultTab(tab) {
+    activeResultTab = tab;
+    const isTable = tab === 'table';
+    const tableTab = document.getElementById('resultsTabTable');
+    const jsonTab  = document.getElementById('resultsTabJson');
+    const tablePanel = getResultsContainer();
+    const jsonPanel  = getResultsJsonWrap();
+    tableTab.classList.toggle('is-active', isTable);
+    jsonTab.classList.toggle('is-active', !isTable);
+    tableTab.setAttribute('aria-selected', String(isTable));
+    jsonTab.setAttribute('aria-selected', String(!isTable));
+    tablePanel.classList.toggle('is-active', isTable);
+    jsonPanel.classList.toggle('is-active', !isTable);
+}
+
+function escapeHtmlChars(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function syntaxHighlightJson(json) {
+    const parts = [];
+    let lastIndex = 0;
+    const regex = /("(?:\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"\s*:?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g;
+    let m;
+    while ((m = regex.exec(json)) !== null) {
+        if (m.index > lastIndex) {
+            parts.push(escapeHtmlChars(json.slice(lastIndex, m.index)));
+        }
+        const token = m[0];
+        let cls;
+        if (token[0] === '"') {
+            cls = /:\s*$/.test(token) ? 'json-key' : 'json-string';
+        } else if (token === 'true' || token === 'false') {
+            cls = 'json-boolean';
+        } else if (token === 'null') {
+            cls = 'json-null';
+        } else {
+            cls = 'json-number';
+        }
+        parts.push(`<span class="${cls}">${escapeHtmlChars(token)}</span>`);
+        lastIndex = m.index + token.length;
+    }
+    if (lastIndex < json.length) {
+        parts.push(escapeHtmlChars(json.slice(lastIndex)));
+    }
+    return parts.join('');
+}
+
+function renderResultsJson(payload) {
+    const json = JSON.stringify(payload, null, 2);
+    getResultsJsonContainer().innerHTML = syntaxHighlightJson(json);
 }
 
 function getResultsStatus() {
@@ -187,8 +250,9 @@ function renderResultsTable(payload) {
 
 function resetRunButton(label = 'Run') {
     const runBtn = document.getElementById('runBtn');
+    const runBtnLabel = runBtn.querySelector('.btn-label');
     runBtn.disabled = false;
-    runBtn.textContent = label;
+    runBtnLabel.textContent = label;
 }
 
 function getContainerGap(container) {
@@ -291,8 +355,26 @@ function setupPaneResizer(initialHeight) {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    sqlEditor = CodeMirror(document.getElementById('queryEditor'), {
+        mode: 'text/x-sql',
+        lineNumbers: true,
+        indentWithTabs: false,
+        smartIndent: true,
+        tabSize: 4,
+        autofocus: true,
+        extraKeys: {
+            'Ctrl-Enter': executeQuery,
+            'Cmd-Enter': executeQuery
+        }
+    });
+    setTimeout(() => sqlEditor.refresh(), 0);
+    const saved = vscode.getState();
+    if (saved && saved.query) {
+        sqlEditor.setValue(saved.query);
+    }
     setupPaneResizer(paneLayout.queryPaneHeight);
     setupEventListeners();
+    setActiveResultTab(activeResultTab);
     setExportState(false);
     setResultMetrics(0, 0);
     vscode.postMessage({ command: 'ready' });
@@ -302,16 +384,36 @@ function setupEventListeners() {
     // Query execution
     document.getElementById('runBtn').addEventListener('click', executeQuery);
     document.getElementById('clearBtn').addEventListener('click', () => {
-        document.getElementById('queryEditor').value = '';
+        sqlEditor.setValue('');
     });
 
-    document.getElementById('queryEditor').addEventListener('keydown', (event) => {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-            event.preventDefault();
-            executeQuery();
+    document.getElementById('resultsTabTable').addEventListener('click', () => setActiveResultTab('table'));
+    document.getElementById('resultsTabJson').addEventListener('click', () => setActiveResultTab('json'));
+
+    document.getElementById('copyJsonBtn').addEventListener('click', async () => {
+        const text = getResultsJsonContainer().textContent || '';
+        const btn = document.getElementById('copyJsonBtn');
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const t = document.createElement('textarea');
+                t.value = text;
+                t.style.position = 'absolute';
+                t.style.left = '-9999px';
+                document.body.appendChild(t);
+                t.select();
+                document.execCommand('copy');
+                document.body.removeChild(t);
+            }
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        } catch {
+            btn.textContent = 'Failed';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
         }
     });
-    
+
     // Export
     document.getElementById('exportCsvBtn').addEventListener('click', () => exportResults('csv'));
     document.getElementById('exportJsonBtn').addEventListener('click', () => exportResults('json'));
@@ -321,7 +423,7 @@ function setupEventListeners() {
 }
 
 function executeQuery() {
-    const query = document.getElementById('queryEditor').value.trim();
+    const query = sqlEditor.getValue().trim();
 
     if (!activeConnection) {
         setResultStatus('Connection is not initialized.', 'error');
@@ -335,9 +437,10 @@ function executeQuery() {
 
     // Disable button and show loading state
     const executeBtn = document.getElementById('runBtn');
-    const originalText = executeBtn.textContent;
+    const executeBtnLabel = executeBtn.querySelector('.btn-label');
+    const originalText = executeBtnLabel.textContent;
     executeBtn.disabled = true;
-    executeBtn.textContent = 'Executing...';
+    executeBtnLabel.textContent = 'Executing...';
     setResultStatus('Running query against MongoDB...', 'loading');
 
     vscode.postMessage({
@@ -348,7 +451,7 @@ function executeQuery() {
     // Reset button after a timeout (will be re-enabled when results arrive)
     setTimeout(() => {
         executeBtn.disabled = false;
-        executeBtn.textContent = originalText;
+        executeBtnLabel.textContent = originalText;
     }, 30000);
 }
 
@@ -369,6 +472,7 @@ function displayResults(data) {
     const payload = normalizeQueryPayload(data);
     currentResults = payload.rows;
     renderResultsTable(payload);
+    renderResultsJson(payload.rows);
     resetRunButton('Run');
 }
 
@@ -388,6 +492,7 @@ function handleMessage(event) {
             setResultMetrics(0, 0);
             setExportState(false);
             renderPlaceholder(message.error || 'Query failed.', 'error');
+            renderResultsJson({ error: message.error || 'Query failed.' });
             setResultStatus(`Query error: ${message.error}`, 'error');
             resetRunButton('Run');
             break;
@@ -397,9 +502,6 @@ function handleMessage(event) {
 // Restore state on reload
 const state = vscode.getState();
 if (state) {
-    if (state.query) {
-        document.getElementById('queryEditor').value = state.query;
-    }
     if (typeof state.queryPaneHeight === 'number' && Number.isFinite(state.queryPaneHeight)) {
         paneLayout.queryPaneHeight = state.queryPaneHeight;
     }
@@ -408,7 +510,7 @@ if (state) {
 // Save state periodically
 setInterval(() => {
     vscode.setState({
-        query: document.getElementById('queryEditor').value,
+        query: sqlEditor ? sqlEditor.getValue() : '',
         queryPaneHeight: paneLayout.queryPaneHeight
     });
 }, 1000);

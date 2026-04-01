@@ -283,10 +283,22 @@ function updateWebviewContent(
 		const jsPath = panel.webview.asWebviewUri(
 			vscode.Uri.file(path.join(context.extensionPath, 'media', 'sql-executor.js'))
 		);
+		const cmCssPath = panel.webview.asWebviewUri(
+			vscode.Uri.file(path.join(context.extensionPath, 'media', 'codemirror.min.css'))
+		);
+		const cmJsPath = panel.webview.asWebviewUri(
+			vscode.Uri.file(path.join(context.extensionPath, 'media', 'codemirror.min.js'))
+		);
+		const cmSqlPath = panel.webview.asWebviewUri(
+			vscode.Uri.file(path.join(context.extensionPath, 'media', 'sql.min.js'))
+		);
 
 		html = html
 			.replace('${cssPath}', cssPath.toString())
 			.replace('${jsPath}', jsPath.toString())
+			.replace('${cmCssPath}', cmCssPath.toString())
+			.replace('${cmJsPath}', cmJsPath.toString())
+			.replace('${cmSqlPath}', cmSqlPath.toString())
 			.replace('${connectionName}', escapeHtml(connectionName))
 			.replace('${connectionHost}', escapeHtml(connection.host))
 			.replace('${connectionPort}', String(connection.port))
@@ -543,21 +555,14 @@ async function executeQuery(
 			'query_executor.py'
 		);
 
+		const connectionString = buildMongoConnectionString(connection);
+
 		// Prepare Python command arguments
 		const args = [
 			pythonScript,
-			`--host=${connection.host}`,
-			`--port=${connection.port}`,
-			`--database=${connection.database}`,
-			`--username=${connection.username}`,
-			`--password=${connection.password}`,
+			`--connection-string=${connectionString}`,
 			`--query=${queryText}`
 		];
-
-		const additionalParameters = connection.additionalParameters ?? {};
-		if (Object.keys(additionalParameters).length > 0) {
-			args.push(`--connection-options=${JSON.stringify(additionalParameters)}`);
-		}
 
 		if (paramsRaw && paramsRaw.trim()) {
 			args.push(`--params=${paramsRaw}`);
@@ -582,6 +587,40 @@ async function executeQuery(
 			error: error.message
 		});
 	}
+}
+
+function buildMongoConnectionString(connection: DbConnection): string {
+	const host = connection.host.trim();
+	const port = Number.isInteger(connection.port) ? connection.port : 27017;
+	const database = connection.database.trim();
+	const username = connection.username?.trim() ?? '';
+	const password = connection.password ?? '';
+	const additionalParameters = connection.additionalParameters ?? {};
+
+	let credentials = '';
+	if (username) {
+		credentials = encodeURIComponent(username);
+		if (password) {
+			credentials += `:${encodeURIComponent(password)}`;
+		}
+		credentials += '@';
+	}
+
+	const queryParts: string[] = [];
+	for (const [key, value] of Object.entries(additionalParameters)) {
+		const trimmedKey = key.trim();
+		if (!trimmedKey) {
+			continue;
+		}
+
+		queryParts.push(
+			`${encodeURIComponent(trimmedKey)}=${encodeURIComponent(String(value ?? ''))}`
+		);
+	}
+
+	const base = `mongodb://${credentials}${host}:${port}/${encodeURIComponent(database)}`;
+	const queryString = queryParts.join('&');
+	return queryString ? `${base}?${queryString}` : base;
 }
 
 async function runPythonScript(
