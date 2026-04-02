@@ -1,66 +1,110 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
-  <link rel="stylesheet" href="${cssPath}">
-</head>
-<body>
-  <div class="page">
-    <h2>${heading}</h2>
-    <div class="form">
-      <div class="field"><label>Name</label><input id="name" /></div>
-      <div class="field"><label>Host</label><input id="host" /></div>
-      <div class="field"><label>Port</label><input id="port" type="number" min="1" max="65535" /></div>
-      <div class="field"><label>Database</label><input id="database" /></div>
-      <div class="field"><label>Username (optional)</label><input id="username" /></div>
-      <div class="field"><label>Password (optional)</label><input id="password" type="password" /></div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${title}</title>
+    <link rel="stylesheet" href="${cssPath}" />
+  </head>
+  <body>
+    <div class="page">
+      <h2>${heading}</h2>
+      <div class="form">
+        <div class="field db-type-field">
+          <label>Database Type</label
+          ><select id="databaseType">
+            <option value="">-- Select Database --</option>
+          </select>
+        </div>
+        <div class="field field-empty" aria-hidden="true"></div>
+        <div class="field"><label>Name</label><input id="name" /></div>
+        <div class="field"><label>Host</label><input id="host" /></div>
+        <div class="field">
+          <label>Port</label
+          ><input id="port" type="number" min="1" max="65535" />
+        </div>
+        <div class="field"><label>Database</label><input id="database" /></div>
+        <div class="field">
+          <label>Username (optional)</label><input id="username" />
+        </div>
+        <div class="field">
+          <label>Password (optional)</label
+          ><input id="password" type="password" />
+        </div>
+        <div class="field">
+          <label>Driver</label
+          ><input id="driver" placeholder="e.g. pymongosql" />
+        </div>
 
-      <div class="field field-full">
-        <div class="section-header">
-          <div class="section-title">Additional Parameters</div>
-          <button id="addParam" class="secondary icon-btn" type="button" title="Add parameter" aria-label="Add parameter">+</button>
+        <div class="field field-full">
+          <div class="section-header">
+            <div class="section-title">Additional Parameters</div>
+            <button
+              id="addParam"
+              class="secondary icon-btn"
+              type="button"
+              title="Add parameter"
+              aria-label="Add parameter"
+            >
+              +
+            </button>
+          </div>
+          <div class="params-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Value</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="additionalParamsBody"></tbody>
+            </table>
+          </div>
+          <div id="additionalParamsEmpty" class="param-empty">
+            No additional parameters.
+          </div>
         </div>
-        <div class="params-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Parameter</th>
-                <th>Value</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="additionalParamsBody"></tbody>
-          </table>
+
+        <div class="field field-full">
+          <label>Connection String</label>
+          <div class="inline-field">
+            <textarea id="connectionString" readonly rows="3"></textarea>
+            <button
+              id="copyConnectionString"
+              class="secondary icon-btn"
+              type="button"
+              title="Copy connection string"
+              aria-label="Copy connection string"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M5 2h8a1 1 0 0 1 1 1v9h-1V3H5V2zm-2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 1v9h8V5H3z"
+                />
+              </svg>
+            </button>
+          </div>
+          <div id="copyStatus" class="copy-status"></div>
         </div>
-        <div id="additionalParamsEmpty" class="param-empty">No additional parameters.</div>
       </div>
 
-      <div class="field field-full">
-        <label>Connection String</label>
-        <div class="inline-field">
-          <textarea id="connectionString" readonly rows="3"></textarea>
-          <button id="copyConnectionString" class="secondary icon-btn" type="button" title="Copy connection string" aria-label="Copy connection string">
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-              <path fill="currentColor" d="M5 2h8a1 1 0 0 1 1 1v9h-1V3H5V2zm-2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 1v9h8V5H3z"/>
-            </svg>
-          </button>
-        </div>
-        <div id="copyStatus" class="copy-status"></div>
+      <div id="error" class="error"></div>
+      <div class="actions">
+        <button id="cancel" class="secondary">Cancel</button>
+        <button id="save" class="primary">${saveLabel}</button>
       </div>
     </div>
 
-    <div id="error" class="error"></div>
-    <div class="actions">
-      <button id="cancel" class="secondary">Cancel</button>
-      <button id="save" class="primary">${saveLabel}</button>
-    </div>
-  </div>
-
-  <script>
-    window.__SQL4ALL_CONNECTION_EDITOR__ = ${initialJson};
-  </script>
-  <script src="${jsPath}"></script>
-</body>
+    <script>
+      window.__SQL4ALL_CONNECTION_EDITOR__ = ${initialJson};
+    </script>
+    <script src="${jsPath}"></script>
+  </body>
 </html>

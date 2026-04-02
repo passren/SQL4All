@@ -1,57 +1,107 @@
 const vscode = acquireVsCodeApi();
 const initial = window.__SQL4ALL_CONNECTION_EDITOR__ || {
-  name: '',
+  name: "",
   connection: {
-    host: 'localhost',
-    port: 27017,
-    database: '',
-    username: '',
-    password: '',
-    additionalParameters: {}
-  }
+    host: "localhost",
+    database: "",
+    username: "",
+    password: "",
+    driver: "",
+    additionalParameters: {},
+  },
 };
 
-document.getElementById('name').value = initial.name || '';
-document.getElementById('host').value = initial.connection.host || 'localhost';
-document.getElementById('port').value = String(initial.connection.port || 27017);
-document.getElementById('database').value = initial.connection.database || '';
-document.getElementById('username').value = initial.connection.username || '';
-document.getElementById('password').value = initial.connection.password || '';
+let driverConfig = initial.driverConfig || {
+  databases: {},
+};
 
-const paramsBody = document.getElementById('additionalParamsBody');
-const paramsEmpty = document.getElementById('additionalParamsEmpty');
+function populateDatabaseTypes() {
+  const select = document.getElementById("databaseType");
+  if (!select) {
+    return;
+  }
 
-function refreshParamsEmptyState() {
-  paramsEmpty.style.display = paramsBody.children.length === 0 ? 'block' : 'none';
+  // Preserve the placeholder and repopulate from current config.
+  select.innerHTML = '<option value="">-- Select Database --</option>';
+  for (const [dbType, dbConfig] of Object.entries(
+    driverConfig.databases || {},
+  )) {
+    const option = document.createElement("option");
+    option.value = dbType;
+    option.textContent = dbType.charAt(0).toUpperCase() + dbType.slice(1);
+    select.appendChild(option);
+  }
 }
 
-function createParamRow(key = '', value = '') {
-  const row = document.createElement('tr');
+document.getElementById("name").value = initial.name || "";
+document.getElementById("host").value = initial.connection.host || "localhost";
+document.getElementById("port").value = initial.connection.port
+  ? String(initial.connection.port)
+  : "";
+document.getElementById("database").value = initial.connection.database || "";
+document.getElementById("username").value = initial.connection.username || "";
+document.getElementById("password").value = initial.connection.password || "";
+document.getElementById("driver").value = initial.connection.driver || "";
 
-  const keyCell = document.createElement('td');
-  const keyInput = document.createElement('input');
-  keyInput.className = 'param-input';
-  keyInput.placeholder = 'e.g. authSource';
+// Handle database type selection
+const databaseTypeSelect = document.getElementById("databaseType");
+if (databaseTypeSelect) {
+  databaseTypeSelect.addEventListener("change", () => {
+    const selectedDb = databaseTypeSelect.value;
+    if (
+      selectedDb &&
+      driverConfig.databases &&
+      driverConfig.databases[selectedDb]
+    ) {
+      const dbConfig = driverConfig.databases[selectedDb];
+      const defaultDriver = dbConfig.driver;
+      document.getElementById("driver").value = defaultDriver;
+      if (typeof dbConfig.default_port === "number") {
+        document.getElementById("port").value = String(dbConfig.default_port);
+      }
+    } else {
+      document.getElementById("driver").value = "";
+    }
+    updateConnectionString();
+  });
+  populateDatabaseTypes();
+}
+
+const paramsBody = document.getElementById("additionalParamsBody");
+const paramsEmpty = document.getElementById("additionalParamsEmpty");
+
+function refreshParamsEmptyState() {
+  paramsEmpty.style.display =
+    paramsBody.children.length === 0 ? "block" : "none";
+}
+
+function createParamRow(key = "", value = "") {
+  const row = document.createElement("tr");
+
+  const keyCell = document.createElement("td");
+  const keyInput = document.createElement("input");
+  keyInput.className = "param-input";
+  keyInput.placeholder = "e.g. authSource";
   keyInput.value = key;
-  keyInput.addEventListener('input', updateConnectionString);
+  keyInput.addEventListener("input", updateConnectionString);
   keyCell.appendChild(keyInput);
 
-  const valueCell = document.createElement('td');
-  const valueInput = document.createElement('input');
-  valueInput.className = 'param-input';
-  valueInput.placeholder = 'e.g. admin';
+  const valueCell = document.createElement("td");
+  const valueInput = document.createElement("input");
+  valueInput.className = "param-input";
+  valueInput.placeholder = "e.g. admin";
   valueInput.value = value;
-  valueInput.addEventListener('input', updateConnectionString);
+  valueInput.addEventListener("input", updateConnectionString);
   valueCell.appendChild(valueInput);
 
-  const actionCell = document.createElement('td');
-  const deleteBtn = document.createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'secondary icon-btn';
-  deleteBtn.textContent = 'x';
-  deleteBtn.title = 'Delete parameter';
-  deleteBtn.setAttribute('aria-label', 'Delete parameter');
-  deleteBtn.addEventListener('click', () => {
+  const actionCell = document.createElement("td");
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "secondary icon-btn";
+  deleteBtn.textContent = "x";
+  deleteBtn.title = "Delete parameter";
+  deleteBtn.setAttribute("aria-label", "Delete parameter");
+  deleteBtn.addEventListener("click", () => {
     row.remove();
     refreshParamsEmptyState();
     updateConnectionString();
@@ -68,16 +118,16 @@ function createParamRow(key = '', value = '') {
 function loadInitialParams() {
   const initialParams = initial.connection.additionalParameters || {};
   Object.entries(initialParams).forEach(([key, value]) => {
-    createParamRow(String(key || ''), String(value || ''));
+    createParamRow(String(key || ""), String(value || ""));
   });
   refreshParamsEmptyState();
 }
 
 function collectAdditionalParameters() {
   const result = {};
-  const rows = Array.from(paramsBody.querySelectorAll('tr'));
+  const rows = Array.from(paramsBody.querySelectorAll("tr"));
   for (const row of rows) {
-    const inputs = row.querySelectorAll('input');
+    const inputs = row.querySelectorAll("input");
     if (inputs.length < 2) {
       continue;
     }
@@ -94,37 +144,64 @@ function collectAdditionalParameters() {
 }
 
 function updateConnectionString() {
-  const host = document.getElementById('host').value.trim() || 'localhost';
-  const port = document.getElementById('port').value.trim() || '27017';
-  const database = document.getElementById('database').value.trim();
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value;
+  const host = document.getElementById("host").value.trim() || "localhost";
+  const port = document.getElementById("port").value.trim();
+  const database = document.getElementById("database").value.trim();
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
   const additionalParameters = collectAdditionalParameters();
+  const selectedDb = document.getElementById("databaseType")?.value;
 
   const encodedUser = encodeURIComponent(username);
   const encodedPass = encodeURIComponent(password);
-  let credentials = '';
+  let credentials = "";
   if (username) {
-    credentials = encodedUser + (password ? ':' + encodedPass : '') + '@';
+    credentials = encodedUser + (password ? ":" + encodedPass : "") + "@";
   }
 
-  const base = 'mongodb://' + credentials + host + ':' + port + '/' + encodeURIComponent(database);
-  const query = Object.entries(additionalParameters)
-    .map(([key, value]) => encodeURIComponent(key) + '=' + encodeURIComponent(String(value)))
-    .join('&');
+  let connectionString = "";
 
-  document.getElementById('connectionString').value = query ? base + '?' + query : base;
-  document.getElementById('copyStatus').textContent = '';
-  document.getElementById('copyStatus').classList.remove('error');
+  // Use template-based generation if database type is selected
+  if (
+    selectedDb &&
+    driverConfig.databases &&
+    driverConfig.databases[selectedDb]
+  ) {
+    const template = driverConfig.databases[selectedDb].uri_template;
+    connectionString = template
+      .replace("[username[:password]@]", credentials)
+      .replace("host", host)
+      .replace(":port", ":" + port)
+      .replace("[database]", database ? "/" + encodeURIComponent(database) : "")
+      .replace("[?additionalParameters]", "");
+  }
+
+  // Append additional parameters
+  const query = Object.entries(additionalParameters)
+    .map(
+      ([key, value]) =>
+        encodeURIComponent(key) + "=" + encodeURIComponent(String(value)),
+    )
+    .join("&");
+
+  if (connectionString && query) {
+    connectionString += connectionString.includes("?")
+      ? "&" + query
+      : "?" + query;
+  }
+
+  document.getElementById("connectionString").value = connectionString;
+  document.getElementById("copyStatus").textContent = "";
+  document.getElementById("copyStatus").classList.remove("error");
 }
 
 async function copyConnectionString() {
-  const connectionString = document.getElementById('connectionString').value;
-  const copyStatus = document.getElementById('copyStatus');
+  const connectionString = document.getElementById("connectionString").value;
+  const copyStatus = document.getElementById("copyStatus");
 
   if (!connectionString) {
-    copyStatus.textContent = 'Nothing to copy.';
-    copyStatus.classList.add('error');
+    copyStatus.textContent = "Nothing to copy.";
+    copyStatus.classList.add("error");
     return;
   }
 
@@ -132,62 +209,66 @@ async function copyConnectionString() {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(connectionString);
     } else {
-      const tempInput = document.createElement('textarea');
+      const tempInput = document.createElement("textarea");
       tempInput.value = connectionString;
-      tempInput.setAttribute('readonly', '');
-      tempInput.style.position = 'absolute';
-      tempInput.style.left = '-9999px';
+      tempInput.setAttribute("readonly", "");
+      tempInput.style.position = "absolute";
+      tempInput.style.left = "-9999px";
       document.body.appendChild(tempInput);
       tempInput.select();
-      document.execCommand('copy');
+      document.execCommand("copy");
       document.body.removeChild(tempInput);
     }
 
-    copyStatus.textContent = 'Copied to clipboard.';
-    copyStatus.classList.remove('error');
+    copyStatus.textContent = "Copied to clipboard.";
+    copyStatus.classList.remove("error");
   } catch {
-    copyStatus.textContent = 'Copy failed. Please copy manually.';
-    copyStatus.classList.add('error');
+    copyStatus.textContent = "Copy failed. Please copy manually.";
+    copyStatus.classList.add("error");
   }
 }
 
 loadInitialParams();
 updateConnectionString();
 
-document.getElementById('addParam').addEventListener('click', () => {
-  createParamRow('', '');
+document.getElementById("addParam").addEventListener("click", () => {
+  createParamRow("", "");
   updateConnectionString();
 });
 
-document.getElementById('copyConnectionString').addEventListener('click', () => {
-  copyConnectionString();
+document
+  .getElementById("copyConnectionString")
+  .addEventListener("click", () => {
+    copyConnectionString();
+  });
+
+["host", "port", "database", "username", "password", "driver"].forEach((id) => {
+  document.getElementById(id).addEventListener("input", updateConnectionString);
 });
 
-['host', 'port', 'database', 'username', 'password'].forEach((id) => {
-  document.getElementById(id).addEventListener('input', updateConnectionString);
-});
-
-document.getElementById('save').addEventListener('click', () => {
+document.getElementById("save").addEventListener("click", () => {
   const data = {
-    name: document.getElementById('name').value,
-    host: document.getElementById('host').value,
-    port: Number(document.getElementById('port').value),
-    database: document.getElementById('database').value,
-    username: document.getElementById('username').value,
-    password: document.getElementById('password').value,
-    additionalParameters: collectAdditionalParameters()
+    name: document.getElementById("name").value,
+    host: document.getElementById("host").value,
+    port: Number(document.getElementById("port").value),
+    database: document.getElementById("database").value,
+    username: document.getElementById("username").value,
+    password: document.getElementById("password").value,
+    driver: document.getElementById("driver").value,
+    additionalParameters: collectAdditionalParameters(),
   };
 
-  vscode.postMessage({ command: 'save', data });
+  vscode.postMessage({ command: "save", data });
 });
 
-document.getElementById('cancel').addEventListener('click', () => {
-  vscode.postMessage({ command: 'cancel' });
+document.getElementById("cancel").addEventListener("click", () => {
+  vscode.postMessage({ command: "cancel" });
 });
 
-window.addEventListener('message', (event) => {
+window.addEventListener("message", (event) => {
   const message = event.data;
-  if (message.command === 'saveError') {
-    document.getElementById('error').textContent = message.error || 'Save failed.';
+  if (message.command === "saveError") {
+    document.getElementById("error").textContent =
+      message.error || "Save failed.";
   }
 });

@@ -5,6 +5,7 @@ A powerful VS Code extension for querying MongoDB using PyMongoSQL SQL syntax. W
 ## Features
 
 ✨ **Key Features:**
+
 - 🔍 **SQL Query Editor** - Write MongoDB queries using familiar SQL syntax
 - 🗄️ **Connection Manager** - Save and manage multiple MongoDB connections
 - 📊 **Result Viewer** - View query results in an organized table format
@@ -16,18 +17,22 @@ A powerful VS Code extension for querying MongoDB using PyMongoSQL SQL syntax. W
 ## Requirements
 
 ### System Requirements
+
 - VS Code 1.110.0 or higher
 - Python 3.7 or higher
 - MongoDB 4.0 or higher (local or remote)
 
 ### Python Dependencies
+
 The extension automatically installs required Python packages:
+
 - `pymongo` - MongoDB driver for Python
 - `pymongosql` - SQL to MongoDB query translator
 
 ## Installation
 
 ### From VS Code Marketplace
+
 1. Open VS Code
 2. Go to Extensions (Ctrl+Shift+X / Cmd+Shift+X)
 3. Search for "SQL4ALL"
@@ -71,7 +76,9 @@ Connection profiles and query history are stored in VS Code's global state for p
 ## Release Notes
 
 ### 1.0.0
+
 Initial release with:
+
 - SQL query editor
 - MongoDB connection management
 - Query execution with PyMongoSQL
@@ -86,19 +93,19 @@ For more help and documentation, visit the [GitHub repository](https://github.co
 
 Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+- [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
 
 ## Working with Markdown
 
 You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+- Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
+- Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
+- Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
 
 ## For more information
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+- [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
+- [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
 
 **Enjoy!**

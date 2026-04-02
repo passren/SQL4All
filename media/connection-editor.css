@@ -1,10 +1,13 @@
-html, body {
+html,
+body {
   height: 100%;
   overflow: hidden;
 }
 
 body {
-  font-family: Segoe UI, sans-serif;
+  font-family:
+    Segoe UI,
+    sans-serif;
   margin: 0;
   padding: 12px 16px;
   color: var(--vscode-foreground);
@@ -37,8 +40,18 @@ h2 {
 }
 
 .field:not(.field-full) input,
+.field:not(.field-full) select,
 .field:not(.field-full) textarea {
   width: 92%;
+}
+
+.db-type-field select {
+  width: 62%;
+  max-width: 220px;
+}
+
+.field-empty {
+  pointer-events: none;
 }
 
 .field-full {
@@ -53,6 +66,15 @@ h2 {
   .field-full {
     grid-column: auto;
   }
+
+  .field-empty {
+    display: none;
+  }
+
+  .db-type-field select {
+    width: 92%;
+    max-width: none;
+  }
 }
 
 label {
@@ -62,6 +84,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   padding: 5px 7px;
@@ -111,7 +134,8 @@ table {
 
 th,
 td {
-  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-input-border));
+  border-bottom: 1px solid
+    var(--vscode-panel-border, var(--vscode-input-border));
   padding: 6px;
   text-align: left;
   vertical-align: top;
@@ -164,7 +188,7 @@ th:last-child {
   flex: 1;
   min-height: 64px;
   resize: vertical;
-  font-family: Consolas, 'Courier New', monospace;
+  font-family: Consolas, "Courier New", monospace;
 }
 
 .copy-status {
