@@ -15,6 +15,38 @@ let driverConfig = initial.driverConfig || {
   databases: {},
 };
 
+function findDatabaseTypeByDriver(driverName) {
+  const normalizedDriverName = String(driverName || "").trim().toLowerCase();
+  if (!normalizedDriverName) {
+    return "";
+  }
+
+  for (const [dbType, dbConfig] of Object.entries(driverConfig.databases || {})) {
+    if (String(dbConfig?.driver || "").trim().toLowerCase() === normalizedDriverName) {
+      return dbType;
+    }
+  }
+
+  return "";
+}
+
+function buildConnectionStringFromTemplate(template, options) {
+  const normalizedTemplate = String(template || "");
+  const encodedDatabase = options.database
+    ? encodeURIComponent(options.database)
+    : "";
+
+  return normalizedTemplate
+    .replace("[username[:password]@]", options.credentials)
+    .replace("host", options.host)
+    .replace("[:port]", options.port ? `:${options.port}` : "")
+    .replace("/[database]", encodedDatabase ? `/${encodedDatabase}` : "")
+    .replace("/[service_name]", encodedDatabase ? `/${encodedDatabase}` : "")
+    .replace("[database]", encodedDatabase)
+    .replace("[service_name]", encodedDatabase)
+    .replace("[?additionalParameters]", "");
+}
+
 function populateDatabaseTypes() {
   const select = document.getElementById("databaseType");
   if (!select) {
@@ -65,6 +97,11 @@ if (databaseTypeSelect) {
     updateConnectionString();
   });
   populateDatabaseTypes();
+
+  const initialDatabaseType = findDatabaseTypeByDriver(initial.connection.driver);
+  if (initialDatabaseType) {
+    databaseTypeSelect.value = initialDatabaseType;
+  }
 }
 
 const paramsBody = document.getElementById("additionalParamsBody");
@@ -168,12 +205,12 @@ function updateConnectionString() {
     driverConfig.databases[selectedDb]
   ) {
     const template = driverConfig.databases[selectedDb].uri_template;
-    connectionString = template
-      .replace("[username[:password]@]", credentials)
-      .replace("host", host)
-      .replace(":port", ":" + port)
-      .replace("[database]", database ? "/" + encodeURIComponent(database) : "")
-      .replace("[?additionalParameters]", "");
+    connectionString = buildConnectionStringFromTemplate(template, {
+      credentials,
+      host,
+      port,
+      database,
+    });
   }
 
   // Append additional parameters
@@ -247,10 +284,11 @@ document
 });
 
 document.getElementById("save").addEventListener("click", () => {
+  const rawPort = document.getElementById("port").value.trim();
   const data = {
     name: document.getElementById("name").value,
     host: document.getElementById("host").value,
-    port: Number(document.getElementById("port").value),
+    port: rawPort ? Number(rawPort) : undefined,
     database: document.getElementById("database").value,
     username: document.getElementById("username").value,
     password: document.getElementById("password").value,

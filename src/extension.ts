@@ -9,7 +9,7 @@ let globalState: vscode.Memento;
 
 interface DbConnection {
   host: string;
-  port: number;
+  port?: number;
   database: string;
   username: string;
   password: string;
@@ -18,6 +18,30 @@ interface DbConnection {
 }
 
 type ConnectionStore = Record<string, DbConnection>;
+
+function formatConnectionSummary(connection: DbConnection): string {
+  const host = connection.host || "";
+  const portSegment = Number.isInteger(connection.port)
+    ? `:${connection.port}`
+    : "";
+  const databaseSegment = connection.database?.trim()
+    ? `/${connection.database.trim()}`
+    : "";
+
+  return `${host}${portSegment}${databaseSegment}`;
+}
+
+function formatConnectionTooltip(
+  connectionName: string,
+  connection: DbConnection,
+): string {
+  const lines = [connectionName, formatConnectionSummary(connection)];
+  if (connection.database?.trim()) {
+    lines.push(`DB: ${connection.database.trim()}`);
+  }
+
+  return lines.filter(Boolean).join("\n");
+}
 
 const EXTENSION_NAMESPACE = "sql4all";
 const BRAND_NAME = "SQL4ALL";
@@ -40,15 +64,10 @@ class ConnectionItem extends vscode.TreeItem {
     public readonly connection: DbConnection,
   ) {
     super(connectionName, vscode.TreeItemCollapsibleState.None);
-    this.description = `${connection.host}:${connection.port}/${connection.database}`;
-    this.tooltip = `${connectionName}\n${connection.host}:${connection.port}\nDB: ${connection.database}`;
+    this.description = formatConnectionSummary(connection);
+    this.tooltip = formatConnectionTooltip(connectionName, connection);
     this.contextValue = CONNECTION_ITEM_CONTEXT;
     this.iconPath = new vscode.ThemeIcon("database");
-    this.command = {
-      command: `${EXTENSION_NAMESPACE}.connectConnection`,
-      title: "Connect",
-      arguments: [this],
-    };
   }
 }
 
@@ -320,7 +339,10 @@ function updateWebviewContent(
       .replace("${cmSqlPath}", cmSqlPath.toString())
       .replace("${connectionName}", escapeHtml(connectionName))
       .replace("${connectionHost}", escapeHtml(connection.host))
-      .replace("${connectionPort}", String(connection.port))
+      .replace(
+        "${connectionPort}",
+        Number.isInteger(connection.port) ? String(connection.port) : "",
+      )
       .replace("${databaseName}", escapeHtml(connection.database));
 
     panel.webview.html = html;
@@ -439,7 +461,7 @@ async function openConnectionEditor(
     const payload = message.data as {
       name: string;
       host: string;
-      port: number;
+      port?: number;
       database: string;
       username: string;
       password: string;
@@ -450,28 +472,24 @@ async function openConnectionEditor(
     const name = payload.name.trim();
     const host = payload.host.trim();
     const database = payload.database.trim();
-    const port = Number(payload.port);
+    const hasPort = typeof payload.port === "number" && Number.isInteger(payload.port);
+    const port = hasPort ? payload.port : undefined;
+    const invalidPort =
+      hasPort && (port === undefined || port <= 0 || port > 65535);
 
-    if (
-      !name ||
-      !host ||
-      !database ||
-      !Number.isInteger(port) ||
-      port <= 0 ||
-      port > 65535
-    ) {
+    if (!name || !host || invalidPort) {
       connectionEditorPanel.webview.postMessage({
         command: "saveError",
-        error: "Please provide valid name, host, port (1-65535), and database.",
+        error: "Please provide a valid name and host. If set, port must be between 1 and 65535.",
       });
       return;
     }
 
-    if (
-      editingName &&
-      editingName !== name &&
-      treeProvider.getConnection(name)
-    ) {
+    const existingConnection = treeProvider.getConnection(name);
+    const isDuplicateName =
+      Boolean(existingConnection) && (!editingName || editingName !== name);
+
+    if (isDuplicateName) {
       connectionEditorPanel.webview.postMessage({
         command: "saveError",
         error: `Connection "${name}" already exists.`,
@@ -590,7 +608,7 @@ async function pickConnection(
     const conn = connections[name];
     items.push({
       label: name,
-      description: `${conn.host}:${conn.port}/${conn.database}`,
+      description: formatConnectionSummary(conn),
     });
   }
 
