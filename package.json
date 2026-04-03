@@ -54,6 +54,18 @@
         "title": "SQL4ALL: Select Python Executable",
         "category": "SQL4ALL",
         "icon": "$(symbol-namespace)"
+      },
+      {
+        "command": "sql4all.reloadDriver",
+        "title": "Reload Driver",
+        "category": "SQL4ALL",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "sql4all.copyTableName",
+        "title": "Copy Table Name",
+        "category": "SQL4ALL",
+        "icon": "$(copy)"
       }
     ],
     "viewsContainers": {
@@ -103,6 +115,16 @@
           "command": "sql4all.deleteConnection",
           "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
           "group": "2_manage@2"
+        },
+        {
+          "command": "sql4all.reloadDriver",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
+          "group": "3_driver@1"
+        },
+        {
+          "command": "sql4all.copyTableName",
+          "when": "view == sql4all.connections && viewItem == sql4all.tableItem",
+          "group": "inline@1"
         }
       ]
     },

@@ -1,218 +1,134 @@
 #!/usr/bin/env python3
 """
 SQL4ALL Query Executor
-Executes SQL queries via any DB-API 2.0 compliant driver.
+Executes SQL queries via SQLAlchemy.
 """
 
 import sys
 import json
+import logging
 import argparse
-import importlib
 import subprocess
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse
 
+LOG_DIR = Path(__file__).resolve().parent.parent / 'logs'
+LOG_DIR.mkdir(exist_ok=True)
+logger = logging.getLogger('sql4all')
+logger.setLevel(logging.DEBUG)
 
-DRIVER_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent / 'media' / 'driver_config.json'
+_log_handler = RotatingFileHandler(
+    filename=str(LOG_DIR / 'query_executor.log'),
+    maxBytes=5 * 1024 * 1024,
+    backupCount=5,
+    encoding='utf-8',
 )
-_DRIVER_CONFIG_CACHE = None
+_log_handler.setFormatter(
+    logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+)
+logger.handlers = [_log_handler]
+logger.propagate = False
+
+REQUIREMENTS_PATH = Path(__file__).resolve().parent / 'requirements.txt'
 
 
-def install_package(package: str) -> None:
-    """Install a Python package via pip."""
-    print(f"Installing {package}...", file=sys.stderr)
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', package])
+def install_requirements() -> None:
+    """Install Python packages from requirements.txt via pip."""
+    print(
+        f"Installing requirements from {REQUIREMENTS_PATH}...",
+        file=sys.stderr,
+    )
+    if not REQUIREMENTS_PATH.exists():
+        raise FileNotFoundError(
+            f"requirements.txt not found: {REQUIREMENTS_PATH}"
+        )
+    subprocess.check_call(
+        [
+            sys.executable,
+            '-m',
+            'pip',
+            'install',
+            '-r',
+            str(REQUIREMENTS_PATH),
+        ],
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )
 
 
-def load_driver(driver_module: str):
-    """
-    Import a DB-API 2.0 compliant driver by module name.
-    Auto-installs the package via pip if it is not found.
-    """
+def ensure_sqlalchemy():
+    """Import sqlalchemy, auto-installing if absent."""
     try:
-        return importlib.import_module(driver_module)
+        import sqlalchemy
+        return sqlalchemy
     except ImportError:
-        install_package(driver_module)
-        try:
-            return importlib.import_module(driver_module)
-        except ImportError as exc:
-            raise ImportError(
-                f"Failed to import driver '{driver_module}' after installation. "
-                "Please install it manually."
-            ) from exc
+        install_requirements()
+        import sqlalchemy
+        return sqlalchemy
 
 
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Execute SQL queries via any DB-API 2.0 compliant driver'
+        description='Execute SQL queries via SQLAlchemy'
     )
     parser.add_argument(
-        '--driver',
+        '--connection-string',
         required=True,
-        help='Python module name of the DB-API 2.0 driver (e.g., pymongosql, psycopg2)'
+        dest='connection_string',
+        help='SQLAlchemy connection URL',
     )
     parser.add_argument(
-        '--connection',
-        required=True,
-        help=(
-            'JSON object with connection details. '
-            'Expected field: {"connectionString"}'
-        )
+        '--action',
+        default='query',
+        choices=['query', 'list-tables', 'ping'],
+        help='Action to perform',
     )
-    parser.add_argument('--query', required=True, help='SQL query to execute')
+    parser.add_argument(
+        '--query',
+        default='',
+        help='SQL query to execute',
+    )
     parser.add_argument(
         '--params',
         default='',
-        help=(
-            'Optional JSON query parameters. '
-            'Supports list (for ?) or object (for :name).'
-        )
+        help='Optional JSON query parameters',
     )
     return parser.parse_args()
 
 
-def parse_connection(connection_raw: str) -> dict:
-    """Parse the --connection JSON argument into a dict."""
-    try:
-        conn = json.loads(connection_raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid --connection JSON: {exc}") from exc
-    if not isinstance(conn, dict):
-        raise ValueError("--connection must be a JSON object")
-    return conn
-
-
-def get_connection_string(conn: dict) -> str:
-    """Get the frontend-provided connection string from connection payload."""
-    raw_uri = (
-        conn.get('connectionString')
-        or conn.get('uri')
-        or conn.get('dsn')
-        or ''
-    )
-    uri = str(raw_uri).strip()
-    if not uri:
-        raise ValueError(
-            'Missing connection string in --connection JSON. '
-            'Expected field "connectionString".'
-        )
-    return uri
-
-
-def build_mysql_kwargs_from_uri(uri: str) -> dict:
-    """Parse a mysql/mariadb URI into kwargs accepted by mysql drivers."""
-    parsed = urlparse(uri)
-    db_name = parsed.path.lstrip('/') if parsed.path else ''
-    query_params = parse_qs(parsed.query or '', keep_blank_values=True)
-
-    kwargs = {
-        'host': parsed.hostname or 'localhost',
-        'port': parsed.port or 3306,
-        'database': unquote(db_name),
-        'user': unquote(parsed.username) if parsed.username else '',
-        'password': unquote(parsed.password) if parsed.password else '',
-    }
-
-    for key, values in query_params.items():
-        if not key:
-            continue
-        kwargs[key] = values[-1] if values else ''
-
-    return kwargs
-
-
-def load_driver_config() -> dict:
-    """Load and cache driver configuration from media/driver_config.json."""
-    global _DRIVER_CONFIG_CACHE
-
-    if _DRIVER_CONFIG_CACHE is not None:
-        return _DRIVER_CONFIG_CACHE
-
-    try:
-        with DRIVER_CONFIG_PATH.open('r', encoding='utf-8') as f:
-            parsed = json.load(f)
-    except Exception:
-        parsed = {}
-
-    if not isinstance(parsed, dict):
-        parsed = {}
-
-    _DRIVER_CONFIG_CACHE = parsed
-    return _DRIVER_CONFIG_CACHE
-
-
-def resolve_database_key_from_driver(driver: str, config: dict) -> str:
-    """Resolve database key from configured driver names."""
-    target = (driver or '').strip().lower()
-    if not target:
-        return ''
-
-    aliases = {
-        'mysql.connector': 'mysql-connector-python',
-        'elasticsearch_dbapi': 'elasticsearch-dbapi',
-    }
-
-    databases = config.get('databases', {}) if isinstance(config, dict) else {}
-    if not isinstance(databases, dict):
-        return ''
-
-    for db_key, db_config in databases.items():
-        if not isinstance(db_config, dict):
-            continue
-
-        configured_driver = str(db_config.get('driver', '')).strip().lower()
-        if target == configured_driver:
-            return str(db_key)
-
-        alias_for_target = aliases.get(target, '')
-        if alias_for_target and alias_for_target == configured_driver:
-            return str(db_key)
-
-    return ''
-
-
-def build_connect_kwargs(driver: str, conn: dict) -> dict:
-    """Build connect kwargs based on driver_config database mapping."""
-    uri = get_connection_string(conn)
-    config = load_driver_config()
-    db_key = resolve_database_key_from_driver(driver, config)
-
-    if db_key == 'mongodb':
-        return {'host': uri}
-    if db_key in ('mysql', 'mariadb'):
-        return build_mysql_kwargs_from_uri(uri)
-
-    # Generic fallback for drivers that consume DSN/URI style input.
-    return {'dsn': uri}
-
-
 def parse_query_params(params_raw: str) -> Any:
-    """Parse optional JSON parameters for cursor.execute()."""
+    """Parse optional JSON parameters."""
     if not params_raw:
         return None
-
     try:
         parsed = json.loads(params_raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid --params JSON: {exc}") from exc
-
+        raise ValueError(
+            f"Invalid --params JSON: {exc}"
+        ) from exc
     if not isinstance(parsed, (list, dict)):
-        raise ValueError("--params must be a JSON array or object")
-
+        raise ValueError(
+            "--params must be a JSON array or object"
+        )
     return parsed
 
 
 def serialize_result(obj: Any) -> Any:
-    """Recursively serialize a query result value for JSON output."""
+    """Recursively serialize a value for JSON."""
     if hasattr(obj, '__dict__'):
         return serialize_result(obj.__dict__)
     elif isinstance(obj, dict):
-        return {k: serialize_result(v) for k, v in obj.items()}
+        return {
+            k: serialize_result(v)
+            for k, v in obj.items()
+        }
     elif isinstance(obj, (list, tuple)):
-        return [serialize_result(item) for item in obj]
+        return [
+            serialize_result(item) for item in obj
+        ]
     elif hasattr(obj, 'isoformat'):
         return obj.isoformat()
     elif isinstance(obj, bytes):
@@ -225,149 +141,170 @@ def serialize_result(obj: Any) -> Any:
             return str(obj)
 
 
-def looks_like_result_set_query(sql_query: str) -> bool:
-    """Best-effort detection for SQL statements that return a result set."""
-    normalized = sql_query.strip().lower()
-    return normalized.startswith(('select', 'show', 'describe', 'with'))
-
-
-def get_dict_cursor(conn, driver):
-    """
-    Return a dict-row cursor when the driver supports it; fall back to a
-    standard cursor otherwise.
-
-    Search order:
-      1. Top-level driver attributes (DictCursor, dictcursor, dict_cursor)
-      2. Common submodules: cursor, cursors, extras
-    """
-    for attr in ('DictCursor', 'dictcursor', 'dict_cursor'):
-        candidate = getattr(driver, attr, None)
-        if candidate is not None:
-            try:
-                return conn.cursor(candidate)
-            except Exception:
-                pass
-
-    for submodule in ('cursor', 'cursors', 'extras'):
-        try:
-            mod = importlib.import_module(f"{driver.__name__}.{submodule}")
-            for attr in ('DictCursor', 'RealDictCursor'):
-                candidate = getattr(mod, attr, None)
-                if candidate is not None:
-                    try:
-                        return conn.cursor(candidate)
-                    except Exception:
-                        pass
-        except ImportError:
-            pass
-
-    return conn.cursor()
-
-
-def rows_to_dicts(rows: list, description) -> list:
-    """
-    Convert tuple rows to dicts using cursor.description column names.
-    Rows that are already dicts are returned unchanged.
-    """
-    if not rows or not description:
-        return rows or []
-
-    if isinstance(rows[0], dict):
-        return rows
-
-    columns = [
-        col[0] if isinstance(col, (list, tuple)) else str(col)
-        for col in description
-    ]
-    return [dict(zip(columns, row)) for row in rows]
-
-
-def execute_query(
-    driver,
-    connect_kwargs: dict,
-    sql_query: str,
-    query_params: Any = None,
-) -> Any:
-    """Execute SQL via the given DB-API 2.0 driver and return serialisable results."""
+def _mask_password(s: str) -> str:
+    """Mask password in a URI for safe logging."""
     try:
-        conn = driver.connect(**connect_kwargs)
-        with conn:
-            cursor = get_dict_cursor(conn, driver)
-            with cursor:
-                if query_params is None:
-                    cursor.execute(sql_query)
-                else:
-                    cursor.execute(sql_query, query_params)
+        if isinstance(s, str) and '://' in s:
+            parsed = urlparse(s)
+            if parsed.password:
+                original = f':{parsed.password}@'
+                return s.replace(original, ':***@')
+        return s
+    except Exception:
+        return s
 
-                fetched_rows = None
-                try:
-                    fetched_rows = cursor.fetchall()
-                except Exception:
-                    fetched_rows = None
 
-                description_columns = []
-                if cursor.description:
-                    for col in cursor.description:
-                        if isinstance(col, (list, tuple)) and col:
-                            description_columns.append(str(col[0]))
-                        else:
-                            description_columns.append(str(col))
+def action_ping(engine):
+    """Test connectivity using the dialect's ping."""
+    try:
+        with engine.connect() as conn:
+            try:
+                is_ok = engine.dialect.do_ping(conn)
+                if not is_ok:
+                    logger.warning(
+                        'do_ping returned false; '
+                        'ignoring and treating as connected'
+                    )
+            except Exception as ping_error:
+                logger.warning(
+                    'do_ping failed and was ignored: %s',
+                    ping_error,
+                )
+        return {
+            "kind": "ping",
+            "ok": True,
+            "message": "Connection successful",
+        }
+    except Exception as e:
+        raise Exception(
+            f"Connection test failed: {e}"
+        ) from e
 
-                if (
-                    fetched_rows is not None
-                    or cursor.description
-                    or looks_like_result_set_query(sql_query)
-                ):
-                    rows = rows_to_dicts(fetched_rows or [], cursor.description)
-                    serialized_rows = serialize_result(rows)
-                    columns = list(description_columns)
-                    seen = set(columns)
-                    for row in serialized_rows:
-                        if isinstance(row, dict):
-                            for key in row.keys():
-                                if key not in seen:
-                                    seen.add(key)
-                                    columns.append(key)
 
-                    return {
-                        "kind": "result-set",
-                        "rows": serialized_rows,
-                        "columns": columns,
-                        "rowCount": len(serialized_rows),
-                        "message": f"Returned {len(serialized_rows)} row(s)"
-                    }
+def action_list_tables(engine):
+    """List table names via SQLAlchemy inspect."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        inspector = sa_inspect(engine)
+        tables = inspector.get_table_names()
+        rows = [{"table_name": t} for t in tables]
+        return {
+            "kind": "result-set",
+            "rows": rows,
+            "columns": ["table_name"],
+            "rowCount": len(tables),
+            "message": f"Found {len(tables)} table(s)",
+        }
+    except Exception as e:
+        raise Exception(
+            f"Failed to list tables: {e}"
+        ) from e
 
+
+def action_query(engine, sql_query, query_params):
+    """Execute a SQL query and return results."""
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            stmt = text(sql_query)
+            if isinstance(query_params, dict):
+                result = conn.execute(stmt, query_params)
+            else:
+                result = conn.execute(stmt)
+
+            if result.returns_rows:
+                columns = list(result.keys())
+                rows = [
+                    dict(row._mapping)
+                    for row in result
+                ]
+                serialized = serialize_result(rows)
+                count = len(serialized)
                 return {
-                    "kind": "command-result",
-                    "rows": [],
-                    "columns": [],
-                    "rowCount": 0,
-                    "affectedRows": cursor.rowcount,
-                    "message": "Statement executed successfully"
+                    "kind": "result-set",
+                    "rows": serialized,
+                    "columns": columns,
+                    "rowCount": count,
+                    "message": (
+                        f"Returned {count} row(s)"
+                    ),
                 }
 
+            conn.commit()
+            return {
+                "kind": "command-result",
+                "rows": [],
+                "columns": [],
+                "rowCount": 0,
+                "affectedRows": result.rowcount,
+                "message": (
+                    "Statement executed successfully"
+                ),
+            }
     except Exception as e:
-        raise Exception(f"Query execution error: {str(e)}")
+        raise Exception(
+            f"Query execution failed: {e}"
+        ) from e
 
 
 def main():
     """Main entry point."""
+    engine = None
     try:
         args = parse_arguments()
+        logger.debug('Action: %s', args.action)
+        masked = _mask_password(args.connection_string)
+        logger.debug('Connection (masked): %s', masked)
 
-        driver_module = load_driver(args.driver)
-        connection = parse_connection(args.connection)
-        connect_kwargs = build_connect_kwargs(args.driver, connection)
-        query_params = parse_query_params(args.params)
-        results = execute_query(driver_module, connect_kwargs, args.query, query_params)
+        sa = ensure_sqlalchemy()
+        engine = sa.create_engine(
+            args.connection_string
+        )
+
+        if args.action == 'ping':
+            results = action_ping(engine)
+        elif args.action == 'list-tables':
+            results = action_list_tables(engine)
+        else:
+            query = args.query
+            if not query or not query.strip():
+                raise ValueError('Query is empty.')
+            logger.debug('Query: %s', query)
+            params = parse_query_params(args.params)
+            results = action_query(
+                engine, query, params
+            )
+
+        row_count = (
+            len(results.get('rows', []))
+            if isinstance(results, dict) else 0
+        )
+        logger.debug(
+            'Result: %d row(s)', row_count
+        )
 
         print(json.dumps(results))
         return 0
 
     except Exception as e:
+        logger.error(
+            'Failed: %s', e, exc_info=True
+        )
         print(json.dumps([]))
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        error = {"error": str(e)}
+        print(
+            json.dumps(error), file=sys.stderr
+        )
         return 1
+    finally:
+        if engine is not None:
+            try:
+                engine.dispose()
+            except Exception as dispose_error:
+                logger.warning(
+                    'Failed to dispose engine: %s',
+                    dispose_error,
+                )
 
 
 if __name__ == '__main__':

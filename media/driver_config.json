@@ -16,17 +16,17 @@
       "icon": "icons/elasticsearch.svg",
       "driver": "elasticsearch-dbapi",
       "default_port": 9200,
-      "uri_template": "elasticsearch://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "uri_template": "elasticsearch+http://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mariadb": {
       "icon": "icons/mariadb.svg",
       "driver": "mariadb",
       "default_port": 3306,
-      "uri_template": "mariadb://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "uri_template": "mariadb+mariadbconnector://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mongodb": {
       "icon": "icons/mongodb.svg",
-      "driver": "pymongosql",
+      "driver": "pymongo",
       "default_port": 27017,
       "uri_template": "mongodb://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
@@ -34,19 +34,19 @@
       "icon": "icons/mysql.svg",
       "driver": "mysql-connector-python",
       "default_port": 3306,
-      "uri_template": "mysql://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "uri_template": "mysql+mysqlconnector://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "oracle": {
       "icon": "icons/oracle.svg",
       "driver": "oracledb",
       "default_port": 1521,
-      "uri_template": "oracle://[username[:password]@]host[:port]/[service_name][?additionalParameters]"
+      "uri_template": "oracle+oracledb://[username[:password]@]host[:port]/[service_name][?additionalParameters]"
     },
     "postgresql": {
       "icon": "icons/postgresql.svg",
       "driver": "psycopg2-binary",
       "default_port": 5432,
-      "uri_template": "postgresql://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "uri_template": "postgresql+psycopg2://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "sqlserver": {
       "icon": "icons/sqlserver.svg",

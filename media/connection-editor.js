@@ -472,15 +472,47 @@ saveBtn.addEventListener("click", () => {
   }
 
   const rawPort = document.getElementById("port").value.trim();
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  const driver = document.getElementById("driver").value;
+  const additionalParameters = collectAdditionalParameters();
+
+  // Build real connection string with actual password for backend
+  const selectedDb = document.getElementById("databaseType")?.value;
+  const resolvedDbType = selectedDb || findDatabaseTypeByDriver(driver);
+  let realConnectionString = "";
+  if (resolvedDbType && driverConfig.databases && driverConfig.databases[resolvedDbType]) {
+    const template = driverConfig.databases[resolvedDbType].uri_template;
+    const encodedUser = encodeURIComponent(username);
+    const encodedPass = password ? encodeURIComponent(password) : "";
+    let creds = "";
+    if (username) {
+      creds = encodedUser + (password ? ":" + encodedPass : "") + "@";
+    }
+    realConnectionString = buildConnectionStringFromTemplate(template, {
+      credentials: creds,
+      host: document.getElementById("host").value.trim() || "localhost",
+      port: rawPort,
+      database: document.getElementById("database").value.trim(),
+    });
+    const query = Object.entries(additionalParameters)
+      .map(([key, value]) => encodeURIComponent(key) + "=" + encodeURIComponent(String(value)))
+      .join("&");
+    if (realConnectionString && query) {
+      realConnectionString += realConnectionString.includes("?") ? "&" + query : "?" + query;
+    }
+  }
+
   const data = {
     name: document.getElementById("name").value,
     host: document.getElementById("host").value,
     port: rawPort ? Number(rawPort) : undefined,
     database: document.getElementById("database").value,
-    username: document.getElementById("username").value,
-    password: document.getElementById("password").value,
-    driver: document.getElementById("driver").value,
-    additionalParameters: collectAdditionalParameters(),
+    username,
+    password,
+    driver,
+    connectionString: realConnectionString,
+    additionalParameters,
   };
 
   vscode.postMessage({ command: "save", data });

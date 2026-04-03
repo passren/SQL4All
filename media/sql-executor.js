@@ -516,7 +516,8 @@ function executeQuery() {
   const originalText = executeBtnLabel.textContent;
   executeBtn.disabled = true;
   executeBtnLabel.textContent = "Executing...";
-  setResultStatus("Running query against MongoDB...", "loading");
+  const targetName = activeConnection?.name || "selected connection";
+  setResultStatus(`Running query against ${targetName}...`, "loading");
 
   vscode.postMessage({
     command: "executeQuery",
