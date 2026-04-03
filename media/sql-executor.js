@@ -7,6 +7,10 @@ let sqlEditor = null;
 let paneLayout = {
   queryPaneHeight: null,
 };
+let draftSaveTimer = null;
+let paneHeightSyncTimer = null;
+let lastSentPaneHeight = null;
+let applySavedPaneHeight = null;
 
 const MIN_QUERY_PANE_HEIGHT = 80;
 const MIN_RESULTS_PANE_HEIGHT = 140;
@@ -312,6 +316,8 @@ function setupPaneResizer(initialHeight) {
     paneLayout.queryPaneHeight = clampedHeight;
   };
 
+  applySavedPaneHeight = applyQueryHeight;
+
   const resetQueryHeight = () => {
     queryPane.style.flex = "";
     paneLayout.queryPaneHeight = null;
@@ -375,6 +381,25 @@ function setupPaneResizer(initialHeight) {
     if (typeof paneLayout.queryPaneHeight === "number") {
       applyQueryHeight(paneLayout.queryPaneHeight);
     }
+  });
+}
+
+function syncPaneLayoutToExtension() {
+  if (
+    typeof paneLayout.queryPaneHeight !== "number" ||
+    !Number.isFinite(paneLayout.queryPaneHeight)
+  ) {
+    return;
+  }
+
+  if (paneLayout.queryPaneHeight === lastSentPaneHeight) {
+    return;
+  }
+
+  lastSentPaneHeight = paneLayout.queryPaneHeight;
+  vscode.postMessage({
+    command: "updatePaneLayout",
+    queryPaneHeight: paneLayout.queryPaneHeight,
   });
 }
 
@@ -457,6 +482,19 @@ function setupEventListeners() {
 
   // Message handler from extension
   window.addEventListener("message", handleMessage);
+
+  sqlEditor.on("change", () => {
+    if (draftSaveTimer !== null) {
+      clearTimeout(draftSaveTimer);
+    }
+
+    draftSaveTimer = setTimeout(() => {
+      vscode.postMessage({
+        command: "updateQueryDraft",
+        query: sqlEditor.getValue(),
+      });
+    }, 200);
+  });
 }
 
 function executeQuery() {
@@ -519,6 +557,17 @@ function handleMessage(event) {
   switch (message.command) {
     case "initConnection":
       activeConnection = message.data;
+      if (typeof activeConnection.lastQuery === "string") {
+        sqlEditor.setValue(activeConnection.lastQuery);
+      }
+      if (
+        typeof activeConnection.queryPaneHeight === "number" &&
+        Number.isFinite(activeConnection.queryPaneHeight) &&
+        typeof applySavedPaneHeight === "function"
+      ) {
+        applySavedPaneHeight(activeConnection.queryPaneHeight);
+        syncPaneLayoutToExtension();
+      }
       setResultStatus(
         `Connected to ${activeConnection.name}. Ready to query.`,
         "neutral",
@@ -557,3 +606,7 @@ setInterval(() => {
     queryPaneHeight: paneLayout.queryPaneHeight,
   });
 }, 1000);
+
+paneHeightSyncTimer = setInterval(() => {
+  syncPaneLayoutToExtension();
+}, 600);

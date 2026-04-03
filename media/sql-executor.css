@@ -5,14 +5,24 @@
 }
 
 :root {
-  --primary-color: #0e639c;
-  --success-color: #07a71a;
-  --danger-color: #f14c4c;
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #252526;
-  --text-primary: #d4d4d4;
-  --text-secondary: #858585;
-  --border-color: #3e3e42;
+  --primary-color: var(--vscode-button-background, #0e639c);
+  --primary-hover-color: var(--vscode-button-hoverBackground, #1177bb);
+  --success-color: var(--vscode-testing-iconPassed, #07a71a);
+  --danger-color: var(--vscode-testing-iconFailed, #f14c4c);
+  --bg-primary: var(--vscode-editor-background, #1e1e1e);
+  --bg-secondary: var(--vscode-editorWidget-background, #252526);
+  --text-primary: var(--vscode-foreground, #d4d4d4);
+  --text-secondary: var(--vscode-descriptionForeground, #858585);
+  --border-color: var(--vscode-panel-border, #3e3e42);
+  --surface-muted: var(--vscode-sideBar-background, #252526);
+  --header-bg-start: var(--vscode-sideBarSectionHeader-background, #242429);
+  --header-bg-end: var(--vscode-editorWidget-background, #212126);
+  --button-bg: var(--vscode-button-secondaryBackground, #3c3c3c);
+  --button-hover-bg: var(--vscode-button-secondaryHoverBackground, #4c4c4c);
+  --button-fg: var(--vscode-button-secondaryForeground, var(--text-primary));
+  --focus-ring: var(--vscode-focusBorder, var(--primary-color));
+  --table-header-bg: var(--vscode-editorGroupHeader-tabsBackground, #0f1218);
+  --table-header-fg: var(--vscode-editor-foreground, #f3f7ff);
 }
 
 body {
@@ -38,7 +48,7 @@ body {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 10px 12px;
-  background: linear-gradient(180deg, #242429 0%, #212126 100%);
+  background: linear-gradient(180deg, var(--header-bg-start) 0%, var(--header-bg-end) 100%);
   margin-bottom: 12px;
 }
 
@@ -49,7 +59,7 @@ h1 {
 
 .subtitle {
   font-size: 12px;
-  color: #cccccc;
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 
@@ -101,7 +111,7 @@ h1 {
 
 .pane-divider:hover,
 .pane-divider.is-dragging {
-  box-shadow: 0 0 0 1px rgba(14, 99, 156, 0.25);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus-ring) 40%, transparent);
 }
 
 body.is-resizing {
@@ -139,13 +149,13 @@ body.is-resizing {
 }
 
 #queryEditor:focus-within {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 5px rgba(14, 99, 156, 0.3);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus-ring) 50%, transparent);
 }
 
 #queryEditor .CodeMirror {
   height: 100%;
-  background-color: #1e1e1e;
+  background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: "Consolas", "Monaco", monospace;
   font-size: 13px;
@@ -154,24 +164,24 @@ body.is-resizing {
 }
 
 #queryEditor .CodeMirror-gutters {
-  background-color: #252526;
+  background-color: var(--surface-muted);
   border-right: 1px solid var(--border-color);
 }
 
 #queryEditor .CodeMirror-linenumber {
-  color: #858585;
+  color: var(--text-secondary);
 }
 
 #queryEditor .CodeMirror-cursor {
-  border-left: 1px solid #aeafad;
+  border-left: 1px solid var(--vscode-editorCursor-foreground, #aeafad);
 }
 
 #queryEditor .CodeMirror-selected {
-  background: #264f78;
+  background: var(--vscode-editor-selectionBackground, #264f78);
 }
 
 #queryEditor .CodeMirror-activeline-background {
-  background: #2a2d2e;
+  background: var(--vscode-editor-lineHighlightBackground, #2a2d2e);
 }
 
 #queryEditor .cm-keyword {
@@ -198,8 +208,8 @@ body.is-resizing {
   padding: 8px 16px;
   border: 1px solid var(--border-color);
   border-radius: 3px;
-  background-color: #3c3c3c;
-  color: var(--text-primary);
+  background-color: var(--button-bg);
+  color: var(--button-fg);
   cursor: pointer;
   font-size: 13px;
   transition: all 0.2s;
@@ -207,8 +217,8 @@ body.is-resizing {
 }
 
 .btn:hover {
-  background-color: #4c4c4c;
-  border-color: var(--text-secondary);
+  background-color: var(--button-hover-bg);
+  border-color: var(--focus-ring);
 }
 
 .btn-primary {
@@ -219,7 +229,7 @@ body.is-resizing {
 }
 
 .btn-primary:hover {
-  background-color: #1177bb;
+  background-color: var(--primary-hover-color);
 }
 
 .btn-success {
@@ -273,7 +283,7 @@ body.is-resizing {
 
 .results-tab {
   border: 1px solid var(--border-color);
-  background: #2f2f34;
+  background: var(--surface-muted);
   color: var(--text-secondary);
   padding: 4px 10px;
   border-radius: 999px;
@@ -283,11 +293,11 @@ body.is-resizing {
 
 .results-tab:hover {
   color: var(--text-primary);
-  border-color: #5a5a60;
+  border-color: var(--focus-ring);
 }
 
 .results-tab.is-active {
-  color: #ffffff;
+  color: var(--vscode-button-foreground, #ffffff);
   background: var(--primary-color);
   border-color: var(--primary-color);
 }
@@ -314,7 +324,7 @@ body.is-resizing {
   border-radius: 4px;
   font-size: 12px;
   border: 1px solid var(--border-color);
-  background-color: #202024;
+  background-color: var(--surface-muted);
 }
 
 .results-status-neutral {
@@ -322,19 +332,19 @@ body.is-resizing {
 }
 
 .results-status-success {
-  color: #7ee787;
+  color: var(--vscode-testing-iconPassed, #7ee787);
   border-color: rgba(7, 167, 26, 0.45);
   background-color: rgba(7, 167, 26, 0.12);
 }
 
 .results-status-error {
-  color: #ff8f8f;
+  color: var(--vscode-testing-iconFailed, #ff8f8f);
   border-color: rgba(241, 76, 76, 0.45);
   background-color: rgba(241, 76, 76, 0.12);
 }
 
 .results-status-loading {
-  color: #8ad0ff;
+  color: var(--vscode-textLink-foreground, #8ad0ff);
   border-color: rgba(14, 99, 156, 0.45);
   background-color: rgba(14, 99, 156, 0.12);
 }
@@ -383,7 +393,7 @@ body.is-resizing {
   font-family: "Consolas", "Monaco", monospace;
   font-size: 12px;
   line-height: 1.45;
-  color: #d4d4d4;
+  color: var(--text-primary);
   white-space: pre;
   margin: 0;
   display: block;
@@ -429,8 +439,8 @@ body.is-resizing {
 .results-table th {
   position: sticky;
   top: 0;
-  background-color: #0f1218;
-  color: #f3f7ff;
+  background-color: var(--table-header-bg);
+  color: var(--table-header-fg);
   padding: 8px;
   text-align: left;
   border-bottom: 2px solid var(--border-color);
@@ -456,7 +466,7 @@ body.is-resizing {
 }
 
 .results-table tr:hover {
-  background-color: #2d2d30;
+  background-color: var(--vscode-list-hoverBackground, #2d2d30);
 }
 
 .row-number-cell {
@@ -465,7 +475,7 @@ body.is-resizing {
   max-width: 52px;
   text-align: right;
   color: var(--text-secondary);
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: color-mix(in srgb, var(--bg-primary) 90%, var(--text-primary) 10%);
 }
 
 .cell-null {
@@ -474,7 +484,7 @@ body.is-resizing {
 }
 
 .cell-object {
-  color: #d7ba7d;
+  color: var(--vscode-debugTokenExpression-name, #d7ba7d);
 }
 
 .results-empty {
@@ -489,7 +499,42 @@ body.is-resizing {
 }
 
 .results-empty-error {
-  color: #ff8f8f;
+  color: var(--vscode-testing-iconFailed, #ff8f8f);
+}
+
+body.vscode-light #queryEditor .cm-keyword,
+body.vscode-high-contrast-light #queryEditor .cm-keyword {
+  color: #0000ff;
+}
+
+body.vscode-light #queryEditor .cm-string,
+body.vscode-high-contrast-light #queryEditor .cm-string {
+  color: #a31515;
+}
+
+body.vscode-light #queryEditor .cm-number,
+body.vscode-high-contrast-light #queryEditor .cm-number {
+  color: #098658;
+}
+
+body.vscode-light #queryEditor .cm-comment,
+body.vscode-high-contrast-light #queryEditor .cm-comment {
+  color: #008000;
+}
+
+body.vscode-light .json-key,
+body.vscode-high-contrast-light .json-key {
+  color: #0451a5;
+}
+
+body.vscode-light .json-string,
+body.vscode-high-contrast-light .json-string {
+  color: #a31515;
+}
+
+body.vscode-light .json-number,
+body.vscode-high-contrast-light .json-number {
+  color: #098658;
 }
 
 .placeholder {

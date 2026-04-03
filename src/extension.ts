@@ -48,6 +48,8 @@ const BRAND_NAME = "SQL4ALL";
 const CONNECTION_VIEW_ID = `${EXTENSION_NAMESPACE}.connections`;
 const CONNECTION_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.connectionItem`;
 const CONNECTION_STORE_KEY = `${EXTENSION_NAMESPACE}.connections`;
+const QUERY_DRAFTS_STORE_KEY = `${EXTENSION_NAMESPACE}.queryDrafts`;
+const QUERY_LAYOUTS_STORE_KEY = `${EXTENSION_NAMESPACE}.queryLayouts`;
 const PYTHON_SETTING_KEY = "pythonPath";
 const READY_MARKER_FILE = ".sql4all-ready";
 
@@ -213,6 +215,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       await connectionTreeProvider.deleteConnection(item.connectionName);
+      await removeConnectionState(context, item.connectionName);
       const panel = panelsByConnection.get(item.connectionName);
       if (panel) {
         panel.dispose();
@@ -266,7 +269,7 @@ function createOrShowPanel(
   const panel = vscode.window.createWebviewPanel(
     "sql4allQuery",
     `${BRAND_NAME} - ${connectionName}`,
-    vscode.ViewColumn.Beside,
+    vscode.ViewColumn.Active,
     {
       enableScripts: true,
       retainContextWhenHidden: true,
@@ -360,6 +363,53 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#039;");
 }
 
+function getQueryDrafts(context: vscode.ExtensionContext): Record<string, string> {
+  const current = context.globalState.get(QUERY_DRAFTS_STORE_KEY);
+  return (current as Record<string, string> | undefined) ?? {};
+}
+
+function getQueryLayouts(context: vscode.ExtensionContext): Record<string, number> {
+  const current = context.globalState.get(QUERY_LAYOUTS_STORE_KEY);
+  return (current as Record<string, number> | undefined) ?? {};
+}
+
+async function saveQueryDraft(
+  context: vscode.ExtensionContext,
+  connectionName: string,
+  query: string,
+): Promise<void> {
+  const drafts = getQueryDrafts(context);
+  drafts[connectionName] = query;
+  await context.globalState.update(QUERY_DRAFTS_STORE_KEY, drafts);
+}
+
+async function saveQueryPaneHeight(
+  context: vscode.ExtensionContext,
+  connectionName: string,
+  queryPaneHeight: number,
+): Promise<void> {
+  const layouts = getQueryLayouts(context);
+  layouts[connectionName] = queryPaneHeight;
+  await context.globalState.update(QUERY_LAYOUTS_STORE_KEY, layouts);
+}
+
+async function removeConnectionState(
+  context: vscode.ExtensionContext,
+  connectionName: string,
+): Promise<void> {
+  const drafts = getQueryDrafts(context);
+  if (Object.prototype.hasOwnProperty.call(drafts, connectionName)) {
+    delete drafts[connectionName];
+    await context.globalState.update(QUERY_DRAFTS_STORE_KEY, drafts);
+  }
+
+  const layouts = getQueryLayouts(context);
+  if (Object.prototype.hasOwnProperty.call(layouts, connectionName)) {
+    delete layouts[connectionName];
+    await context.globalState.update(QUERY_LAYOUTS_STORE_KEY, layouts);
+  }
+}
+
 async function handleWebviewMessage(
   message: any,
   context: vscode.ExtensionContext,
@@ -369,6 +419,8 @@ async function handleWebviewMessage(
 ) {
   switch (message.command) {
     case "ready":
+      const drafts = getQueryDrafts(context);
+      const layouts = getQueryLayouts(context);
       panel.webview.postMessage({
         command: "initConnection",
         data: {
@@ -376,10 +428,24 @@ async function handleWebviewMessage(
           host: connection.host,
           port: connection.port,
           database: connection.database,
+          lastQuery: drafts[connectionName] || "",
+          queryPaneHeight: layouts[connectionName],
         },
       });
       break;
+    case "updateQueryDraft":
+      await saveQueryDraft(
+        context,
+        connectionName,
+        typeof message.query === "string" ? message.query : "",
+      );
+      break;
     case "executeQuery":
+      await saveQueryDraft(
+        context,
+        connectionName,
+        typeof message.query === "string" ? message.query : "",
+      );
       await executeQuery(
         message.query,
         message.paramsRaw,
@@ -388,6 +454,18 @@ async function handleWebviewMessage(
         context,
         panel,
       );
+      break;
+    case "updatePaneLayout":
+      if (
+        typeof message.queryPaneHeight === "number" &&
+        Number.isFinite(message.queryPaneHeight)
+      ) {
+        await saveQueryPaneHeight(
+          context,
+          connectionName,
+          message.queryPaneHeight,
+        );
+      }
       break;
     case "exportResults":
       exportResults(message.data, message.format);
@@ -499,6 +577,7 @@ async function openConnectionEditor(
 
     if (editingName && editingName !== name) {
       await treeProvider.deleteConnection(editingName);
+      await removeConnectionState(context, editingName);
       const existingPanel = panelsByConnection.get(editingName);
       if (existingPanel) {
         existingPanel.dispose();
@@ -660,6 +739,7 @@ async function executeQuery(
       return;
     }
     const connectionData = {
+      connectionString: buildConnectionUri(connection),
       host: connection.host,
       port: connection.port,
       database: connection.database,

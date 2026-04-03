@@ -20,31 +20,31 @@
       },
       {
         "command": "sql4all.addConnection",
-        "title": "SQL4ALL: Add Connection",
+        "title": "Add Connection",
         "category": "SQL4ALL",
         "icon": "$(add)"
       },
       {
         "command": "sql4all.connectConnection",
-        "title": "SQL4ALL: Connect",
+        "title": "Connect",
         "category": "SQL4ALL",
         "icon": "$(plug)"
       },
       {
         "command": "sql4all.editConnection",
-        "title": "SQL4ALL: Edit Connection",
+        "title": "Edit Connection...",
         "category": "SQL4ALL",
         "icon": "$(edit)"
       },
       {
         "command": "sql4all.deleteConnection",
-        "title": "SQL4ALL: Delete Connection",
+        "title": "Delete Connection...",
         "category": "SQL4ALL",
         "icon": "$(trash)"
       },
       {
         "command": "sql4all.refreshConnections",
-        "title": "SQL4ALL: Refresh Connections",
+        "title": "Refresh Connections",
         "category": "SQL4ALL",
         "icon": "$(refresh)"
       },
@@ -96,12 +96,12 @@
         {
           "command": "sql4all.editConnection",
           "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
-          "group": "inline@2"
+          "group": "2_manage@1"
         },
         {
           "command": "sql4all.deleteConnection",
           "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
-          "group": "inline@3"
+          "group": "2_manage@2"
         }
       ]
     },
