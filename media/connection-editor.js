@@ -22,7 +22,16 @@ function findDatabaseTypeByDriver(driverName) {
   }
 
   for (const [dbType, dbConfig] of Object.entries(driverConfig.databases || {})) {
-    if (String(dbConfig?.driver || "").trim().toLowerCase() === normalizedDriverName) {
+    const configuredDriver = String(dbConfig?.driver || "").trim().toLowerCase();
+    if (!configuredDriver) {
+      continue;
+    }
+
+    if (
+      configuredDriver === normalizedDriverName
+      || normalizedDriverName.includes(configuredDriver)
+      || configuredDriver.includes(normalizedDriverName)
+    ) {
       return dbType;
     }
   }
@@ -48,20 +57,53 @@ function buildConnectionStringFromTemplate(template, options) {
 }
 
 function populateDatabaseTypes() {
-  const select = document.getElementById("databaseType");
-  if (!select) {
+  const list = document.getElementById("dbTypeList");
+  if (!list) {
     return;
   }
 
-  // Preserve the placeholder and repopulate from current config.
-  select.innerHTML = '<option value="">-- Select Database --</option>';
+  list.innerHTML = "";
+
+  // Placeholder entry
+  const placeholder = document.createElement("li");
+  placeholder.className = "db-type-option db-type-option-placeholder";
+  placeholder.setAttribute("role", "option");
+  placeholder.setAttribute("aria-selected", "false");
+  placeholder.setAttribute("data-value", "");
+  placeholder.textContent = "-- Select Database --";
+  placeholder.addEventListener("click", () => selectDbType("", null, "-- Select Database --"));
+  list.appendChild(placeholder);
+
   for (const [dbType, dbConfig] of Object.entries(
     driverConfig.databases || {},
   )) {
-    const option = document.createElement("option");
-    option.value = dbType;
-    option.textContent = dbType.charAt(0).toUpperCase() + dbType.slice(1);
-    select.appendChild(option);
+    const li = document.createElement("li");
+    li.className = "db-type-option";
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", "false");
+    li.setAttribute("data-value", dbType);
+
+    if (dbConfig.icon) {
+      const img = document.createElement("img");
+      img.src = dbConfig.icon;
+      img.alt = dbType;
+      img.width = 14;
+      img.height = 14;
+      li.appendChild(img);
+    }
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = dbType.charAt(0).toUpperCase() + dbType.slice(1);
+    li.appendChild(nameSpan);
+
+    li.addEventListener("click", () =>
+      selectDbType(
+        dbType,
+        dbConfig.icon || null,
+        nameSpan.textContent,
+      ),
+    );
+    list.appendChild(li);
   }
 }
 
@@ -75,37 +117,136 @@ document.getElementById("username").value = initial.connection.username || "";
 document.getElementById("password").value = initial.connection.password || "";
 document.getElementById("driver").value = initial.connection.driver || "";
 
-// Handle database type selection
-const databaseTypeSelect = document.getElementById("databaseType");
-if (databaseTypeSelect) {
-  databaseTypeSelect.addEventListener("change", () => {
-    const selectedDb = databaseTypeSelect.value;
-    if (
-      selectedDb &&
-      driverConfig.databases &&
-      driverConfig.databases[selectedDb]
-    ) {
-      const dbConfig = driverConfig.databases[selectedDb];
-      const defaultDriver = dbConfig.driver;
-      document.getElementById("driver").value = defaultDriver;
-      if (typeof dbConfig.default_port === "number") {
-        document.getElementById("port").value = String(dbConfig.default_port);
-      }
-    } else {
-      document.getElementById("driver").value = "";
-    }
-    updateConnectionString();
-  });
-  populateDatabaseTypes();
+// Driver installation status
+const driverStatusEl = document.getElementById("driverStatus");
+const installedDrivers = initial.installedDrivers || {};
 
-  const initialDatabaseType = findDatabaseTypeByDriver(initial.connection.driver);
-  if (initialDatabaseType) {
-    databaseTypeSelect.value = initialDatabaseType;
+function updateDriverStatus(driverName, version) {
+  if (!driverName) {
+    driverStatusEl.setAttribute("hidden", "");
+    driverStatusEl.textContent = "";
+    return;
+  }
+  const key = driverName.trim().toLowerCase();
+  const val = version !== undefined ? version : installedDrivers[key];
+  if (val) {
+    const versionText = typeof val === "string" ? val : "";
+    driverStatusEl.textContent = versionText
+      ? "\u2714 Installed (v" + versionText + ")"
+      : "\u2714 Installed";
+    driverStatusEl.removeAttribute("hidden");
+  } else {
+    driverStatusEl.setAttribute("hidden", "");
+    driverStatusEl.textContent = "";
   }
 }
 
+updateDriverStatus(initial.connection.driver || "");
+
+document.getElementById("driver").addEventListener("input", function () {
+  updateDriverStatus(this.value);
+});
+
 const paramsBody = document.getElementById("additionalParamsBody");
 const paramsEmpty = document.getElementById("additionalParamsEmpty");
+
+// Handle database type selection
+const dbTypeWidget = document.getElementById("dbTypeWidget");
+const dbTypeHidden = document.getElementById("databaseType");
+
+function selectDbType(dbType, iconSrc, label) {
+  const iconEl = document.getElementById("dbTypeIcon");
+  const labelEl = document.getElementById("dbTypeLabel");
+  const list = document.getElementById("dbTypeList");
+
+  // Update hidden value (used by updateConnectionString)
+  dbTypeHidden.value = dbType;
+
+  // Show/hide icon
+  if (iconSrc) {
+    iconEl.src = iconSrc;
+    iconEl.alt = dbType;
+    iconEl.removeAttribute("hidden");
+  } else {
+    iconEl.src = "";
+    iconEl.alt = "";
+    iconEl.setAttribute("hidden", "");
+  }
+
+  // Update button label
+  labelEl.textContent = label || "-- Select Database --";
+
+  // Update aria-selected on list items
+  if (list) {
+    for (const li of list.querySelectorAll("[data-value]")) {
+      li.setAttribute(
+        "aria-selected",
+        li.getAttribute("data-value") === dbType ? "true" : "false",
+      );
+    }
+  }
+
+  closeDbTypeDropdown();
+
+  // Apply driver defaults
+  if (dbType && driverConfig.databases && driverConfig.databases[dbType]) {
+    const dbConfig = driverConfig.databases[dbType];
+    document.getElementById("driver").value = dbConfig.driver;
+    if (typeof dbConfig.default_port === "number") {
+      document.getElementById("port").value = String(dbConfig.default_port);
+    }
+  } else {
+    document.getElementById("driver").value = "";
+  }
+
+  updateDriverStatus(document.getElementById("driver").value);
+  updateConnectionString();
+}
+
+function openDbTypeDropdown() {
+  dbTypeWidget?.setAttribute("aria-expanded", "true");
+}
+
+function closeDbTypeDropdown() {
+  dbTypeWidget?.setAttribute("aria-expanded", "false");
+}
+
+if (dbTypeWidget) {
+  dbTypeWidget.addEventListener("click", (e) => {
+    if (!e.target.closest(".db-type-option")) {
+      const isOpen = dbTypeWidget.getAttribute("aria-expanded") === "true";
+      isOpen ? closeDbTypeDropdown() : openDbTypeDropdown();
+    }
+  });
+
+  dbTypeWidget.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const isOpen = dbTypeWidget.getAttribute("aria-expanded") === "true";
+      isOpen ? closeDbTypeDropdown() : openDbTypeDropdown();
+    } else if (e.key === "Escape") {
+      closeDbTypeDropdown();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!dbTypeWidget.contains(e.target)) {
+      closeDbTypeDropdown();
+    }
+  });
+
+  populateDatabaseTypes();
+
+  const initialDatabaseType = findDatabaseTypeByDriver(initial.connection.driver);
+  if (initialDatabaseType && driverConfig.databases?.[initialDatabaseType]) {
+    const dbConfig = driverConfig.databases[initialDatabaseType];
+    selectDbType(
+      initialDatabaseType,
+      dbConfig.icon || null,
+      initialDatabaseType.charAt(0).toUpperCase() + initialDatabaseType.slice(1),
+    );
+  }
+}
 
 function refreshParamsEmptyState() {
   paramsEmpty.style.display =
@@ -153,7 +294,41 @@ function createParamRow(key = "", value = "") {
 }
 
 function loadInitialParams() {
-  const initialParams = initial.connection.additionalParameters || {};
+  const safeDecode = (value) => {
+    try {
+      return decodeURIComponent(value || "");
+    } catch {
+      return String(value || "");
+    }
+  };
+
+  let initialParams = initial.connection.additionalParameters || {};
+  if (Object.keys(initialParams).length === 0) {
+    const existingConnectionString = String(
+      initial.connection.connectionString || "",
+    );
+    const queryIndex = existingConnectionString.indexOf("?");
+    if (queryIndex >= 0) {
+      const queryString = existingConnectionString.slice(queryIndex + 1);
+      const parsedFallback = {};
+      for (const chunk of queryString.split("&")) {
+        if (!chunk) {
+          continue;
+        }
+
+        const [rawKey, rawValue = ""] = chunk.split("=");
+        const key = safeDecode(rawKey).trim();
+        if (!key) {
+          continue;
+        }
+
+        parsedFallback[key] = safeDecode(rawValue);
+      }
+
+      initialParams = parsedFallback;
+    }
+  }
+
   Object.entries(initialParams).forEach(([key, value]) => {
     createParamRow(String(key || ""), String(value || ""));
   });
@@ -188,23 +363,26 @@ function updateConnectionString() {
   const password = document.getElementById("password").value;
   const additionalParameters = collectAdditionalParameters();
   const selectedDb = document.getElementById("databaseType")?.value;
+  const currentDriver = document.getElementById("driver").value;
 
   const encodedUser = encodeURIComponent(username);
-  const encodedPass = encodeURIComponent(password);
+  const maskedPass = password ? "*".repeat(password.length) : "";
   let credentials = "";
   if (username) {
-    credentials = encodedUser + (password ? ":" + encodedPass : "") + "@";
+    credentials = encodedUser + (password ? ":" + maskedPass : "") + "@";
   }
 
   let connectionString = "";
 
-  // Use template-based generation if database type is selected
+  // Use template-based generation if database type is selected,
+  // otherwise resolve by driver field to keep edit mode in sync.
+  const resolvedDbType = selectedDb || findDatabaseTypeByDriver(currentDriver);
   if (
-    selectedDb &&
+    resolvedDbType &&
     driverConfig.databases &&
-    driverConfig.databases[selectedDb]
+    driverConfig.databases[resolvedDbType]
   ) {
-    const template = driverConfig.databases[selectedDb].uri_template;
+    const template = driverConfig.databases[resolvedDbType].uri_template;
     connectionString = buildConnectionStringFromTemplate(template, {
       credentials,
       host,
@@ -283,7 +461,16 @@ document
   document.getElementById(id).addEventListener("input", updateConnectionString);
 });
 
-document.getElementById("save").addEventListener("click", () => {
+const saveBtn = document.getElementById("save");
+saveBtn.dataset.originalLabel = saveBtn.textContent;
+
+saveBtn.addEventListener("click", () => {
+  const selectedDbType = document.getElementById("databaseType").value;
+  if (!selectedDbType) {
+    document.getElementById("error").textContent = "Please select a database type.";
+    return;
+  }
+
   const rawPort = document.getElementById("port").value.trim();
   const data = {
     name: document.getElementById("name").value,
@@ -303,10 +490,56 @@ document.getElementById("cancel").addEventListener("click", () => {
   vscode.postMessage({ command: "cancel" });
 });
 
+// Show reload driver button only in edit mode
+const reloadDriverBtn = document.getElementById("reloadDriver");
+if (initial.name) {
+  reloadDriverBtn.removeAttribute("hidden");
+}
+
+reloadDriverBtn.addEventListener("click", () => {
+  const driverValue = document.getElementById("driver").value.trim();
+  if (!driverValue) {
+    document.getElementById("error").textContent = "No driver specified.";
+    return;
+  }
+  document.getElementById("error").textContent = "";
+  vscode.postMessage({ command: "reloadDriver", driver: driverValue });
+});
+
 window.addEventListener("message", (event) => {
   const message = event.data;
   if (message.command === "saveError") {
     document.getElementById("error").textContent =
       message.error || "Save failed.";
+  }
+
+  if (message.command === "setupProgress") {
+    const progressEl = document.getElementById("setupProgress");
+    const progressText = document.getElementById("setupProgressText");
+    const saveBtn = document.getElementById("save");
+    const cancelBtn = document.getElementById("cancel");
+
+    if (message.inProgress) {
+      progressEl.removeAttribute("hidden");
+      progressText.textContent = message.message || "Setting up...";
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      saveBtn.textContent = "Setting up...";
+    } else {
+      progressEl.setAttribute("hidden", "");
+      progressText.textContent = "";
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+      saveBtn.textContent = saveBtn.dataset.originalLabel || "Save";
+    }
+  }
+
+  if (message.command === "driverStatus") {
+    const version = message.version || (message.installed ? true : null);
+    if (version) {
+      const driverValue = document.getElementById("driver").value.trim();
+      installedDrivers[driverValue.toLowerCase()] = version;
+      updateDriverStatus(driverValue, version);
+    }
   }
 });

@@ -45,9 +45,109 @@ h2 {
   width: 92%;
 }
 
-.db-type-field select {
+.db-type-widget {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 62%;
   max-width: 220px;
+  padding: 5px 7px;
+  font-size: 12px;
+  line-height: 1.3;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.db-type-widget:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.db-type-widget-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.db-type-widget-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-type-widget-chevron {
+  flex-shrink: 0;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  transition: transform 0.12s;
+}
+
+.db-type-widget[aria-expanded="true"] .db-type-widget-chevron {
+  transform: rotate(180deg);
+}
+
+.db-type-widget-list {
+  display: none;
+  position: absolute;
+  top: calc(100% + 3px);
+  left: -1px;
+  right: -1px;
+  z-index: 200;
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-focusBorder, var(--vscode-input-border));
+  border-radius: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.db-type-widget[aria-expanded="true"] .db-type-widget-list {
+  display: block;
+}
+
+.db-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.db-type-option:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.db-type-option[aria-selected="true"] {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(
+    --vscode-list-activeSelectionForeground,
+    var(--vscode-foreground)
+  );
+}
+
+.db-type-option img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.db-type-option-placeholder {
+  color: var(--vscode-descriptionForeground);
 }
 
 .field-empty {
@@ -71,7 +171,7 @@ h2 {
     display: none;
   }
 
-  .db-type-field select {
+  .db-type-widget {
     width: 92%;
     max-width: none;
   }
@@ -230,4 +330,93 @@ button {
   color: var(--vscode-errorForeground);
   min-height: 18px;
   font-size: 12px;
+}
+
+.driver-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.driver-input-wrap input {
+  flex: 1;
+}
+
+.reload-driver-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.reload-driver-btn:hover {
+  opacity: 1;
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.reload-driver-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.reload-driver-btn[hidden] {
+  display: none;
+}
+
+.driver-status {
+  font-size: 11px;
+  font-weight: normal;
+  color: #3fb950;
+  margin-left: 6px;
+}
+
+.driver-status[hidden] {
+  display: none;
+}
+
+.setup-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.setup-progress[hidden] {
+  display: none;
+}
+
+.setup-progress-bar {
+  flex: 0 0 120px;
+  height: 4px;
+  background: var(--vscode-input-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.setup-progress-fill {
+  width: 40%;
+  height: 100%;
+  background: var(--vscode-progressBar-background, #0078d4);
+  border-radius: 2px;
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); width: 40%; }
+  50% { transform: translateX(100%); width: 60%; }
+  100% { transform: translateX(300%); width: 40%; }
+}
+
+.setup-progress-text {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
 }

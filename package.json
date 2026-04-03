@@ -1,7 +1,8 @@
 {
   "name": "sql4all",
   "displayName": "SQL4ALL",
-  "description": "Query NoSQL Database using SQL syntax",
+  "publisher": "sql4all",
+  "description": "Query SQL/NoSQL Database using SQL syntax",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.110.0"

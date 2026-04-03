@@ -1,46 +1,55 @@
 {
   "databases": {
     "athena": {
+      "icon": "icons/athena.svg",
       "driver": "pyathena",
       "default_port": 443,
       "uri_template": "awsathena+rest://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "dynamodb": {
+      "icon": "icons/dynamodb.svg",
       "driver": "pydynamodb",
       "default_port": 443,
       "uri_template": "dynamodb://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "elasticsearch": {
+      "icon": "icons/elasticsearch.svg",
       "driver": "elasticsearch-dbapi",
       "default_port": 9200,
       "uri_template": "elasticsearch://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mariadb": {
+      "icon": "icons/mariadb.svg",
       "driver": "mariadb",
       "default_port": 3306,
       "uri_template": "mariadb://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mongodb": {
+      "icon": "icons/mongodb.svg",
       "driver": "pymongosql",
       "default_port": 27017,
       "uri_template": "mongodb://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mysql": {
+      "icon": "icons/mysql.svg",
       "driver": "mysql-connector-python",
       "default_port": 3306,
       "uri_template": "mysql://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "oracle": {
+      "icon": "icons/oracle.svg",
       "driver": "oracledb",
       "default_port": 1521,
       "uri_template": "oracle://[username[:password]@]host[:port]/[service_name][?additionalParameters]"
     },
     "postgresql": {
-      "driver": "psycopg2",
+      "icon": "icons/postgresql.svg",
+      "driver": "psycopg2-binary",
       "default_port": 5432,
       "uri_template": "postgresql://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "sqlserver": {
+      "icon": "icons/sqlserver.svg",
       "driver": "pyodbc",
       "default_port": 1433,
       "uri_template": "mssql+pyodbc://[username[:password]@]host[:port]/[database][?additionalParameters]"

@@ -19,7 +19,95 @@ interface DbConnection {
 
 type ConnectionStore = Record<string, DbConnection>;
 
-function formatConnectionSummary(connection: DbConnection): string {
+function normalizeAdditionalParameters(
+  value: unknown,
+): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      continue;
+    }
+
+    normalized[normalizedKey] = String(rawValue ?? "");
+  }
+
+  return normalized;
+}
+
+function normalizeConnection(raw: unknown): DbConnection {
+  const source = (raw && typeof raw === "object")
+    ? (raw as Record<string, unknown>)
+    : {};
+
+  const rawAdditionalParameters =
+    source.additionalParameters
+    ?? source.additional_parameters
+    ?? source.params
+    ?? source.parameters;
+
+  const normalizedPort = Number(source.port);
+
+  return {
+    host: String(source.host ?? "localhost"),
+    port: Number.isInteger(normalizedPort) && normalizedPort > 0
+      ? normalizedPort
+      : undefined,
+    database: String(source.database ?? ""),
+    username: String(source.username ?? ""),
+    password: String(source.password ?? ""),
+    driver: String(source.driver ?? source.dbDriver ?? "").trim(),
+    additionalParameters: normalizeAdditionalParameters(rawAdditionalParameters),
+  };
+}
+
+function buildConnectionStringFromTemplate(
+  template: string,
+  connection: DbConnection,
+): string {
+  const normalizedTemplate = String(template || "");
+  const host = connection.host?.trim() || "localhost";
+  const database = connection.database?.trim() || "";
+  const encodedDatabase = database ? encodeURIComponent(database) : "";
+  const username = connection.username?.trim() || "";
+  const encodedUser = encodeURIComponent(username);
+
+  let credentials = "";
+  if (username) {
+    credentials = `${encodedUser}@`;
+  }
+
+  const query = Object.entries(connection.additionalParameters ?? {})
+    .filter(([key]) => String(key).trim().length > 0)
+    .map(
+      ([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(String(value ?? ""))}`,
+    )
+    .join("&");
+
+  return normalizedTemplate
+    .replace("[username[:password]@]", credentials)
+    .replace("host", host)
+    .replace("[:port]", Number.isInteger(connection.port) ? `:${connection.port}` : "")
+    .replace("/[database]", encodedDatabase ? `/${encodedDatabase}` : "")
+    .replace("/[service_name]", encodedDatabase ? `/${encodedDatabase}` : "")
+    .replace("[database]", encodedDatabase)
+    .replace("[service_name]", encodedDatabase)
+    .replace("[?additionalParameters]", query ? `?${query}` : "");
+}
+
+function formatConnectionSummary(
+  connection: DbConnection,
+  uriTemplate?: string,
+): string {
+  if (uriTemplate) {
+    return buildConnectionStringFromTemplate(uriTemplate, connection);
+  }
+
   const host = connection.host || "";
   const portSegment = Number.isInteger(connection.port)
     ? `:${connection.port}`
@@ -33,9 +121,10 @@ function formatConnectionSummary(connection: DbConnection): string {
 
 function formatConnectionTooltip(
   connectionName: string,
+  summary: string,
   connection: DbConnection,
 ): string {
-  const lines = [connectionName, formatConnectionSummary(connection)];
+  const lines = [connectionName, summary];
   if (connection.database?.trim()) {
     lines.push(`DB: ${connection.database.trim()}`);
   }
@@ -53,9 +142,13 @@ const QUERY_LAYOUTS_STORE_KEY = `${EXTENSION_NAMESPACE}.queryLayouts`;
 const PYTHON_SETTING_KEY = "pythonPath";
 const READY_MARKER_FILE = ".sql4all-ready";
 
+const INSTALLED_DRIVERS_STORE_KEY = `${EXTENSION_NAMESPACE}.installedDrivers`;
+
 const NEW_CONNECTION = "__NEW_CONNECTION__";
 const panelsByConnection = new Map<string, vscode.WebviewPanel>();
 let connectionEditorPanel: vscode.WebviewPanel | undefined;
+let connectionTreeView: vscode.TreeView<ConnectionItem> | undefined;
+let connectionTreeProviderRef: ConnectionTreeProvider | undefined;
 let pythonEnvPath: string | undefined;
 let pythonSetupPromise: Promise<string> | undefined;
 let pythonStatusBar: vscode.StatusBarItem | undefined;
@@ -64,12 +157,15 @@ class ConnectionItem extends vscode.TreeItem {
   constructor(
     public readonly connectionName: string,
     public readonly connection: DbConnection,
+    iconPath?: vscode.ThemeIcon | vscode.Uri,
+    summary?: string,
   ) {
     super(connectionName, vscode.TreeItemCollapsibleState.None);
-    this.description = formatConnectionSummary(connection);
-    this.tooltip = formatConnectionTooltip(connectionName, connection);
+    const resolvedSummary = summary ?? formatConnectionSummary(connection);
+    this.description = resolvedSummary;
+    this.tooltip = formatConnectionTooltip(connectionName, resolvedSummary, connection);
     this.contextValue = CONNECTION_ITEM_CONTEXT;
-    this.iconPath = new vscode.ThemeIcon("database");
+    this.iconPath = iconPath ?? new vscode.ThemeIcon("database");
   }
 }
 
@@ -78,10 +174,16 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<ConnectionItem> 
     ConnectionItem | undefined | null | void
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private readonly driverIconsByDriver = new Map<string, vscode.Uri>();
+  private readonly driverTemplatesByDriver = new Map<string, string>();
+  private cachedItems: ConnectionItem[] = [];
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.loadDriverIconMap();
+  }
 
   refresh(): void {
+    this.cachedItems = [];
     this._onDidChangeTreeData.fire();
   }
 
@@ -90,15 +192,114 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<ConnectionItem> 
   }
 
   getChildren(): ConnectionItem[] {
+    if (this.cachedItems.length > 0) {
+      return this.cachedItems;
+    }
+
     const connections = this.getConnections();
-    return Object.keys(connections)
+    this.cachedItems = Object.keys(connections)
       .sort((a, b) => a.localeCompare(b))
-      .map((name) => new ConnectionItem(name, connections[name]));
+      .map((name) => {
+        const connection = connections[name];
+        return new ConnectionItem(
+          name,
+          connection,
+          this.resolveConnectionIcon(connection),
+          this.resolveConnectionSummary(connection),
+        );
+      });
+    return this.cachedItems;
+  }
+
+  getParent(): vscode.ProviderResult<ConnectionItem> {
+    return undefined;
+  }
+
+  findItem(connectionName: string): ConnectionItem | undefined {
+    return this.cachedItems.find((item) => item.connectionName === connectionName);
+  }
+
+  private loadDriverIconMap(): void {
+    const mediaPath = path.join(this.context.extensionPath, "media");
+    const driverConfigPath = path.join(mediaPath, "driver_config.json");
+
+    try {
+      const raw = fs.readFileSync(driverConfigPath, "utf8");
+      const parsed = JSON.parse(raw) as {
+        databases?: Record<
+          string,
+          { driver?: string; icon?: string; uri_template?: string }
+        >;
+      };
+
+      for (const dbConfig of Object.values(parsed.databases ?? {})) {
+        const driver = String(dbConfig.driver || "").trim().toLowerCase();
+        const template = String(dbConfig.uri_template || "").trim();
+        const iconRelativePath = String(dbConfig.icon || "").trim();
+        if (!driver) {
+          continue;
+        }
+
+        if (template) {
+          this.driverTemplatesByDriver.set(driver, template);
+        }
+
+        if (!iconRelativePath) {
+          continue;
+        }
+
+        const iconAbsolutePath = path.join(mediaPath, iconRelativePath);
+        if (!fs.existsSync(iconAbsolutePath)) {
+          continue;
+        }
+
+        this.driverIconsByDriver.set(driver, vscode.Uri.file(iconAbsolutePath));
+      }
+    } catch {
+      // Keep default theme icon when driver config cannot be loaded.
+    }
+  }
+
+  private resolveConnectionIcon(
+    connection: DbConnection,
+  ): vscode.ThemeIcon | vscode.Uri {
+    const driver = String(connection.driver || "").trim().toLowerCase();
+    if (!driver) {
+      return new vscode.ThemeIcon("database");
+    }
+
+    return this.driverIconsByDriver.get(driver) ?? new vscode.ThemeIcon("database");
+  }
+
+  getDriverIcon(connection: DbConnection): vscode.Uri | undefined {
+    const driver = String(connection.driver || "").trim().toLowerCase();
+    if (!driver) {
+      return undefined;
+    }
+
+    return this.driverIconsByDriver.get(driver);
+  }
+
+  private resolveConnectionSummary(connection: DbConnection): string {
+    const driver = String(connection.driver || "").trim().toLowerCase();
+    if (!driver) {
+      return formatConnectionSummary(connection);
+    }
+
+    const template = this.driverTemplatesByDriver.get(driver);
+    return formatConnectionSummary(connection, template);
   }
 
   getConnections(): ConnectionStore {
     const current = this.context.globalState.get(CONNECTION_STORE_KEY);
-    return (current as ConnectionStore | undefined) ?? {};
+    const rawConnections = (current as Record<string, unknown> | undefined) ?? {};
+
+    const normalizedConnections: ConnectionStore = {};
+    for (const [name, rawConnection] of Object.entries(rawConnections)) {
+      normalizedConnections[name] = normalizeConnection(rawConnection);
+    }
+
+    return normalizedConnections;
   }
 
   async saveConnections(connections: ConnectionStore): Promise<void> {
@@ -115,7 +316,7 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<ConnectionItem> 
     connection: DbConnection,
   ): Promise<void> {
     const connections = this.getConnections();
-    connections[name] = connection;
+    connections[name] = normalizeConnection(connection);
     await this.saveConnections(connections);
   }
 
@@ -127,15 +328,16 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<ConnectionItem> 
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  const venvDir = path.join(context.globalStorageUri.fsPath, "python-env");
+  console.log(`[SQL4All] venv path: ${venvDir}`);
   globalState = context.globalState;
   const connectionTreeProvider = new ConnectionTreeProvider(context);
+  connectionTreeProviderRef = connectionTreeProvider;
 
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider(
-      CONNECTION_VIEW_ID,
-      connectionTreeProvider,
-    ),
-  );
+  connectionTreeView = vscode.window.createTreeView(CONNECTION_VIEW_ID, {
+    treeDataProvider: connectionTreeProvider,
+  });
+  context.subscriptions.push(connectionTreeView);
 
   const openPanelDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.openQueryPanel`,
@@ -255,6 +457,28 @@ export function activate(context: vscode.ExtensionContext) {
   console.log(`${BRAND_NAME} extension activated`);
 }
 
+function revealConnectionInTree(
+  treeProvider: ConnectionTreeProvider,
+  connectionName: string,
+): void {
+  if (!connectionTreeView) {
+    return;
+  }
+
+  // Ensure items are populated
+  treeProvider.getChildren();
+  const target = treeProvider.findItem(connectionName);
+  if (target) {
+    connectionTreeView.reveal(target, { select: true, focus: false });
+  }
+}
+
+function revealConnection(connectionName: string): void {
+  if (connectionTreeProviderRef) {
+    revealConnectionInTree(connectionTreeProviderRef, connectionName);
+  }
+}
+
 function createOrShowPanel(
   context: vscode.ExtensionContext,
   connectionName: string,
@@ -280,6 +504,20 @@ function createOrShowPanel(
   );
 
   panelsByConnection.set(connectionName, panel);
+
+  // Set tab icon based on database driver
+  if (connectionTreeProviderRef) {
+    const iconUri = connectionTreeProviderRef.getDriverIcon(connection);
+    if (iconUri) {
+      panel.iconPath = iconUri;
+    }
+  }
+
+  panel.onDidChangeViewState(() => {
+    if (panel.active) {
+      revealConnection(connectionName);
+    }
+  });
 
   panel.webview.onDidReceiveMessage(
     (message: any) =>
@@ -505,13 +743,16 @@ async function openConnectionEditor(
 
   const initial: { name: string; connection: DbConnection } = {
     name: editingName ?? "",
-    connection: editingConnection ?? {
+    connection: editingConnection
+      ? normalizeConnection(editingConnection)
+      : {
       host: "localhost",
       port: 0,
       database: "",
       username: "",
       password: "",
       driver: "",
+      additionalParameters: {},
     },
   };
 
@@ -520,7 +761,18 @@ async function openConnectionEditor(
     connectionEditorPanel.webview,
     initial,
     Boolean(editingName),
+    context,
   );
+
+  if (editingName) {
+    const editorPanelRef = connectionEditorPanel;
+    editorPanelRef.onDidChangeViewState(() => {
+      if (editorPanelRef.active && editingName) {
+        revealConnectionInTree(treeProvider, editingName);
+      }
+    });
+    revealConnectionInTree(treeProvider, editingName);
+  }
 
   connectionEditorPanel.webview.onDidReceiveMessage(async (message: any) => {
     if (!connectionEditorPanel) {
@@ -529,6 +781,57 @@ async function openConnectionEditor(
 
     if (message.command === "cancel") {
       connectionEditorPanel.dispose();
+      return;
+    }
+
+    if (message.command === "reloadDriver") {
+      const driverName = (message.driver || "").trim();
+      if (!driverName) {
+        return;
+      }
+      try {
+        connectionEditorPanel.webview.postMessage({
+          command: "setupProgress",
+          message: `Upgrading driver: ${driverName}...`,
+          inProgress: true,
+        });
+
+        const venvPython = await ensurePythonEnvironment(context);
+        await runProcess(venvPython, [
+          "-m",
+          "pip",
+          "install",
+          "--upgrade",
+          "--quiet",
+          driverName,
+        ]);
+        const version = await fetchDriverVersion(context, driverName);
+        await markDriverInstalled(context, driverName, version);
+
+        connectionEditorPanel.webview.postMessage({
+          command: "setupProgress",
+          message: "",
+          inProgress: false,
+        });
+        connectionEditorPanel.webview.postMessage({
+          command: "driverStatus",
+          installed: true,
+          version: version || null,
+        });
+        vscode.window.showInformationMessage(
+          `Driver ${driverName} upgraded successfully.`,
+        );
+      } catch (err: any) {
+        connectionEditorPanel.webview.postMessage({
+          command: "setupProgress",
+          message: "",
+          inProgress: false,
+        });
+        connectionEditorPanel.webview.postMessage({
+          command: "saveError",
+          error: `Driver upgrade failed: ${err?.message || String(err)}`,
+        });
+      }
       return;
     }
 
@@ -555,10 +858,14 @@ async function openConnectionEditor(
     const invalidPort =
       hasPort && (port === undefined || port <= 0 || port > 65535);
 
-    if (!name || !host || invalidPort) {
+    if (!name || !host || invalidPort || name.length > 20) {
       connectionEditorPanel.webview.postMessage({
         command: "saveError",
-        error: "Please provide a valid name and host. If set, port must be between 1 and 65535.",
+        error: !name || !host
+          ? "Please provide a valid name and host."
+          : name.length > 20
+            ? "Connection name must be 20 characters or less."
+            : "Port must be between 1 and 65535.",
       });
       return;
     }
@@ -584,13 +891,55 @@ async function openConnectionEditor(
       }
     }
 
+    const driverValue = payload.driver?.trim() || "";
+
+    // Ensure Python venv + driver are installed before saving
+    if (driverValue) {
+      try {
+        await ensureDriverInstalled(
+          context,
+          driverValue,
+          (message: string) => {
+            if (connectionEditorPanel) {
+              connectionEditorPanel.webview.postMessage({
+                command: "setupProgress",
+                message,
+                inProgress: true,
+              });
+            }
+          },
+        );
+
+        if (connectionEditorPanel) {
+          connectionEditorPanel.webview.postMessage({
+            command: "setupProgress",
+            message: "",
+            inProgress: false,
+          });
+        }
+      } catch (setupError: any) {
+        if (connectionEditorPanel) {
+          connectionEditorPanel.webview.postMessage({
+            command: "setupProgress",
+            message: "",
+            inProgress: false,
+          });
+          connectionEditorPanel.webview.postMessage({
+            command: "saveError",
+            error: `Python setup failed: ${setupError?.message || String(setupError)}`,
+          });
+        }
+        return;
+      }
+    }
+
     await treeProvider.upsertConnection(name, {
       host,
       port,
       database,
       username: payload.username?.trim() ?? "",
       password: payload.password ?? "",
-      driver: payload.driver?.trim() || "",
+      driver: driverValue,
       additionalParameters: payload.additionalParameters ?? {},
     });
 
@@ -613,6 +962,7 @@ function getConnectionEditorHtml(
   webview: vscode.Webview,
   initial: { name: string; connection: DbConnection },
   isEdit: boolean,
+  context: vscode.ExtensionContext,
 ): string {
   const htmlPath = path.join(mediaPath, "connection-editor.html");
   const cssPath = webview.asWebviewUri(
@@ -627,9 +977,10 @@ function getConnectionEditorHtml(
     driverConfig?: {
       databases: Record<
         string,
-        { driver: string; default_port?: number; uri_template: string }
+        { icon?: string; driver: string; default_port?: number; uri_template: string }
       >;
     };
+    installedDrivers?: Record<string, string | boolean>;
   } = {
     ...initial,
   };
@@ -655,7 +1006,23 @@ function getConnectionEditorHtml(
     // Keep default config when file is missing or invalid.
   }
 
+  // Inline icon SVG files as base64 data URIs so they load without CSP issues.
+  for (const dbConfig of Object.values(
+    driverConfig.databases as Record<string, { icon?: string }>,
+  )) {
+    if (dbConfig.icon) {
+      try {
+        const iconPath = path.join(mediaPath, dbConfig.icon);
+        const svgContent = fs.readFileSync(iconPath);
+        dbConfig.icon = `data:image/svg+xml;base64,${svgContent.toString("base64")}`;
+      } catch {
+        dbConfig.icon = undefined;
+      }
+    }
+  }
+
   initialPayload.driverConfig = driverConfig;
+  initialPayload.installedDrivers = getInstalledDrivers(context);
   const initialJson = JSON.stringify(initialPayload).replace(/</g, "\\u003c");
 
   let html = fs.readFileSync(htmlPath, "utf8");
@@ -848,6 +1215,7 @@ async function ensurePythonEnvironment(
 
     if (!fs.existsSync(venvPython)) {
       const bootstrap = await resolveSystemPython();
+      await validatePythonVersion(bootstrap);
       await runProcess(bootstrap.command, [
         ...bootstrap.args,
         "-m",
@@ -857,23 +1225,13 @@ async function ensurePythonEnvironment(
     }
 
     if (!fs.existsSync(readyMarker)) {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `${BRAND_NAME}: preparing Python environment`,
-          cancellable: false,
-        },
-        async () => {
-          await runProcess(venvPython, [
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "pip",
-          ]);
-        },
-      );
-
+      await runProcess(venvPython, [
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "pip",
+      ]);
       fs.writeFileSync(readyMarker, new Date().toISOString(), "utf8");
     }
 
@@ -887,6 +1245,124 @@ async function ensurePythonEnvironment(
   return pythonSetupPromise;
 }
 
+async function validatePythonVersion(
+  python: { command: string; args: string[] },
+): Promise<void> {
+  const output = await runProcess(python.command, [
+    ...python.args,
+    "-c",
+    "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+  ]);
+  const versionStr = output.trim();
+  const [major, minor] = versionStr.split(".").map(Number);
+  if (major < 3 || (major === 3 && minor < 9)) {
+    throw new Error(
+      `Python 3.9 or later is required, but found ${versionStr}. Please select a compatible Python.`,
+    );
+  }
+}
+
+function loadDriverConfig(
+  context: vscode.ExtensionContext,
+): Record<string, { driver?: string }> {
+  const mediaPath = path.join(context.extensionPath, "media");
+  const driverConfigPath = path.join(mediaPath, "driver_config.json");
+  try {
+    const raw = fs.readFileSync(driverConfigPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed?.databases && typeof parsed.databases === "object") {
+      return parsed.databases;
+    }
+  } catch {
+    // Ignore parse errors.
+  }
+  return {};
+}
+
+function getInstalledDrivers(
+  context: vscode.ExtensionContext,
+): Record<string, string | boolean> {
+  const stored = context.globalState.get(INSTALLED_DRIVERS_STORE_KEY);
+  return (stored as Record<string, string | boolean> | undefined) ?? {};
+}
+
+async function markDriverInstalled(
+  context: vscode.ExtensionContext,
+  pipPackage: string,
+  version?: string,
+): Promise<void> {
+  const installed = getInstalledDrivers(context);
+  installed[pipPackage.toLowerCase()] = version || true;
+  await context.globalState.update(INSTALLED_DRIVERS_STORE_KEY, installed);
+}
+
+function isDriverInstalled(
+  context: vscode.ExtensionContext,
+  pipPackage: string,
+): boolean {
+  const installed = getInstalledDrivers(context);
+  return !!installed[pipPackage.toLowerCase()];
+}
+
+function getDriverInstalledVersion(
+  context: vscode.ExtensionContext,
+  pipPackage: string,
+): string | undefined {
+  const installed = getInstalledDrivers(context);
+  const val = installed[pipPackage.toLowerCase()];
+  return typeof val === "string" ? val : undefined;
+}
+
+async function fetchDriverVersion(
+  context: vscode.ExtensionContext,
+  pipPackage: string,
+): Promise<string | undefined> {
+  try {
+    const venvPython = await ensurePythonEnvironment(context);
+    const output = await runProcess(venvPython, [
+      "-m",
+      "pip",
+      "show",
+      pipPackage,
+    ]);
+    const match = output.match(/^Version:\s*(.+)$/m);
+    return match ? match[1].trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function ensureDriverInstalled(
+  context: vscode.ExtensionContext,
+  driverName: string,
+  progressCallback?: (message: string) => void,
+): Promise<void> {
+  const pipPackage = driverName.trim();
+  if (!pipPackage) {
+    return;
+  }
+
+  if (isDriverInstalled(context, pipPackage)) {
+    return;
+  }
+
+  progressCallback?.(`Setting up Python environment...`);
+  const venvPython = await ensurePythonEnvironment(context);
+
+  progressCallback?.(`Installing driver: ${pipPackage}...`);
+  await runProcess(venvPython, [
+    "-m",
+    "pip",
+    "install",
+    "--quiet",
+    pipPackage,
+  ]);
+
+  const version = await fetchDriverVersion(context, pipPackage);
+  await markDriverInstalled(context, pipPackage, version);
+  progressCallback?.(`Driver ${pipPackage} installed successfully.`);
+}
+
 async function resolveSystemPython(): Promise<{
   command: string;
   args: string[];
@@ -896,6 +1372,18 @@ async function resolveSystemPython(): Promise<{
   if (configuredPython) {
     await runProcess(configuredPython, ["--version"]);
     return { command: configuredPython, args: [] };
+  }
+
+  // Try VS Code Python extension's selected interpreter
+  const pythonExtConfig = vscode.workspace.getConfiguration("python");
+  const vscodePythonPath = pythonExtConfig.get<string>("defaultInterpreterPath", "").trim();
+  if (vscodePythonPath && vscodePythonPath !== "python") {
+    try {
+      await runProcess(vscodePythonPath, ["--version"]);
+      return { command: vscodePythonPath, args: [] };
+    } catch {
+      // Fall through to other candidates.
+    }
   }
 
   if (process.platform === "win32") {
@@ -1026,6 +1514,7 @@ async function selectPythonExecutable(
 
   try {
     await runProcess(selectedPath, ["--version"]);
+    await validatePythonVersion({ command: selectedPath, args: [] });
     await vscode.workspace
       .getConfiguration(EXTENSION_NAMESPACE)
       .update(
