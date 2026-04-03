@@ -1,111 +1,51 @@
 # SQL4ALL
 
-A powerful VS Code extension for querying MongoDB using PyMongoSQL SQL syntax. Write SQL queries and execute them against MongoDB without writing complex aggregation pipelines.
+A powerful VS Code extension for querying SQL and NoSQL databases using standard SQL syntax. Write SQL queries and execute them against various supported database engines — powered by SQLAlchemy.
 
 ## Features
 
-✨ **Key Features:**
+- **SQL Query Editor** — A editor with SQL syntax highlighting
+- **Connection Manager** — Save, edit, and manage multiple database connections
+- **SQL & NoSQL Databases** — PostgreSQL, MySQL, SQLite, MongoDB, Snowflake, BigQuery, and many more
+- **Result Viewer** — View query results in an organized table or JSON format
+- **Export Results** — Export to CSV or JSON
+- **Auto Driver Install** — The required Python driver for each database is installed automatically on first use
 
-- 🔍 **SQL Query Editor** - Write MongoDB queries using familiar SQL syntax
-- 🗄️ **Connection Manager** - Save and manage multiple MongoDB connections
-- 📊 **Result Viewer** - View query results in an organized table format
-- 📝 **Query History** - Track all previously executed queries
-- 💾 **Export Results** - Export query results to CSV or JSON format
-- ⌨️ **Keyboard Shortcuts** - Quick access with `Ctrl+Shift+M` (Windows/Linux) or `Cmd+Shift+M` (Mac)
-- 🔐 **Secure Storage** - Connection profiles stored securely in VS Code
+## Supported Databases
+
+SQL4ALL supports any database that has a [SQLAlchemy dialect](https://docs.sqlalchemy.org/en/20/dialects/) — including PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Snowflake, BigQuery, DuckDB, and many more.
+
+See the full list of [included](https://docs.sqlalchemy.org/en/20/dialects/) and [external](https://docs.sqlalchemy.org/en/20/dialects/#external-dialects) dialects in the SQLAlchemy documentation.
 
 ## Requirements
 
-### System Requirements
-
 - VS Code 1.110.0 or higher
-- Python 3.7 or higher
-- MongoDB 4.0 or higher (local or remote)
+- Python 3.9 or higher
 
 ### Python Dependencies
 
-The extension automatically installs required Python packages:
+The extension automatically installs the required Python packages:
 
-- `pymongo` - MongoDB driver for Python
-- `pymongosql` - SQL to MongoDB query translator
+- `sqlalchemy` >= 2.0 — core query engine
+- A database-specific driver — installed automatically on first connection
 
 ## Installation
 
-### From VS Code Marketplace
-
 1. Open VS Code
-2. Go to Extensions (Ctrl+Shift+X / Cmd+Shift+X)
-3. Search for "SQL4ALL"
+2. Go to Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`)
+3. Search for **SQL4ALL**
 4. Click Install
 
 ## Quick Start
 
-1. **Open Query Panel**: Press `Ctrl+Shift+M` (Windows/Linux) or `Cmd+Shift+M` (Mac)
-2. **Create Connection**: Fill in MongoDB connection details and click Save
-3. **Write Query**: Enter SQL query in the editor
-4. **Execute**: Click Execute Query or press Ctrl+Enter
-5. **View Results**: Results appear in the table below
-6. **Export**: Click Export CSV or Export JSON to save results
-
-## Example Queries
-
-```sql
--- Basic SELECT
-SELECT * FROM users
-
--- With WHERE clause
-SELECT name, email FROM users WHERE age > 25
-
--- With ORDER BY
-SELECT * FROM products ORDER BY price DESC
-
--- With LIMIT
-SELECT * FROM posts LIMIT 10 OFFSET 20
-```
-
-## Extension Settings
-
-Connection profiles and query history are stored in VS Code's global state for persistence across sessions.
+1. **Add a Connection** — Click the **+** button in the SQL4ALL sidebar
+2. **Select Database Type** — Pick from the supported list and fill in credentials
+3. **Open SQL Executor** — Click the ▶ button on a connection to list its tables and open the editor
+4. **Write & Run** — Enter a SQL query, then press `Ctrl+Enter` or click **Run**
+5. **View Results** — Results appear in the table below the editor
+6. **Export** — Click **Export CSV** or **Export JSON** to save results
 
 ## Known Issues
 
-- PyMongoSQL syntax limitations may affect complex queries
-- Very large result sets (>100K rows) may have performance impact
-- Real-time MongoDB changes are not reflected until re-query
-
-## Release Notes
-
-### 1.0.0
-
-Initial release with:
-
-- SQL query editor
-- MongoDB connection management
-- Query execution with PyMongoSQL
-- Result viewing and export
-- Query history tracking
-
----
-
-For more help and documentation, visit the [GitHub repository](https://github.com).
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-- [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-- Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-- Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-- Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-- [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-- [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- Very large result sets (>100K rows) may impact performance
+- Some databases require additional system-level dependencies (e.g., ODBC drivers for SQL Server)

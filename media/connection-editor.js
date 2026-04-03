@@ -41,18 +41,18 @@ function findDatabaseTypeByDriver(driverName) {
 
 function buildConnectionStringFromTemplate(template, options) {
   const normalizedTemplate = String(template || "");
-  const encodedDatabase = options.database
-    ? encodeURIComponent(options.database)
+  const rawDatabase = options.database
+    ? String(options.database)
     : "";
 
   return normalizedTemplate
     .replace("[username[:password]@]", options.credentials)
     .replace("host", options.host)
     .replace("[:port]", options.port ? `:${options.port}` : "")
-    .replace("/[database]", encodedDatabase ? `/${encodedDatabase}` : "")
-    .replace("/[service_name]", encodedDatabase ? `/${encodedDatabase}` : "")
-    .replace("[database]", encodedDatabase)
-    .replace("[service_name]", encodedDatabase)
+    .replace("/[database]", rawDatabase ? `/${rawDatabase}` : "")
+    .replace("/[service_name]", rawDatabase ? `/${rawDatabase}` : "")
+    .replace("[database]", rawDatabase)
+    .replace("[service_name]", rawDatabase)
     .replace("[?additionalParameters]", "");
 }
 
@@ -365,11 +365,10 @@ function updateConnectionString() {
   const selectedDb = document.getElementById("databaseType")?.value;
   const currentDriver = document.getElementById("driver").value;
 
-  const encodedUser = encodeURIComponent(username);
   const maskedPass = password ? "*".repeat(password.length) : "";
   let credentials = "";
   if (username) {
-    credentials = encodedUser + (password ? ":" + maskedPass : "") + "@";
+    credentials = username + (password ? ":" + maskedPass : "") + "@";
   }
 
   let connectionString = "";
@@ -393,10 +392,7 @@ function updateConnectionString() {
 
   // Append additional parameters
   const query = Object.entries(additionalParameters)
-    .map(
-      ([key, value]) =>
-        encodeURIComponent(key) + "=" + encodeURIComponent(String(value)),
-    )
+    .map(([key, value]) => key + "=" + String(value))
     .join("&");
 
   if (connectionString && query) {
@@ -483,11 +479,9 @@ saveBtn.addEventListener("click", () => {
   let realConnectionString = "";
   if (resolvedDbType && driverConfig.databases && driverConfig.databases[resolvedDbType]) {
     const template = driverConfig.databases[resolvedDbType].uri_template;
-    const encodedUser = encodeURIComponent(username);
-    const encodedPass = password ? encodeURIComponent(password) : "";
     let creds = "";
     if (username) {
-      creds = encodedUser + (password ? ":" + encodedPass : "") + "@";
+      creds = username + (password ? ":" + password : "") + "@";
     }
     realConnectionString = buildConnectionStringFromTemplate(template, {
       credentials: creds,
@@ -496,7 +490,7 @@ saveBtn.addEventListener("click", () => {
       database: document.getElementById("database").value.trim(),
     });
     const query = Object.entries(additionalParameters)
-      .map(([key, value]) => encodeURIComponent(key) + "=" + encodeURIComponent(String(value)))
+      .map(([key, value]) => key + "=" + String(value))
       .join("&");
     if (realConnectionString && query) {
       realConnectionString += realConnectionString.includes("?") ? "&" + query : "?" + query;

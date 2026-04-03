@@ -11,6 +11,9 @@ let draftSaveTimer = null;
 let paneHeightSyncTimer = null;
 let lastSentPaneHeight = null;
 let applySavedPaneHeight = null;
+let isQueryExecuting = false;
+let queryExecutionStartedAt = null;
+let queryExecutionTimer = null;
 
 const MIN_QUERY_PANE_HEIGHT = 80;
 const MIN_RESULTS_PANE_HEIGHT = 140;
@@ -94,6 +97,49 @@ function setResultStatus(message, type = "neutral") {
   const status = getResultsStatus();
   status.className = `results-status results-status-${type}`;
   status.textContent = message;
+}
+
+function formatElapsedSeconds(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "0.00";
+  }
+  return seconds.toFixed(2);
+}
+
+function startExecutionStatus(targetName) {
+  queryExecutionStartedAt = Date.now();
+  setResultStatus(`Running query against ${targetName}... (0.00s)`, "loading");
+
+  if (queryExecutionTimer !== null) {
+    clearInterval(queryExecutionTimer);
+  }
+
+  queryExecutionTimer = setInterval(() => {
+    if (!Number.isFinite(queryExecutionStartedAt)) {
+      return;
+    }
+    const elapsedSeconds = (Date.now() - queryExecutionStartedAt) / 1000;
+    setResultStatus(
+      `Running query against ${targetName}... (${formatElapsedSeconds(elapsedSeconds)}s)`,
+      "loading",
+    );
+  }, 100);
+}
+
+function stopExecutionStatus() {
+  if (queryExecutionTimer !== null) {
+    clearInterval(queryExecutionTimer);
+    queryExecutionTimer = null;
+  }
+
+  if (!Number.isFinite(queryExecutionStartedAt)) {
+    queryExecutionStartedAt = null;
+    return null;
+  }
+
+  const elapsedSeconds = (Date.now() - queryExecutionStartedAt) / 1000;
+  queryExecutionStartedAt = null;
+  return elapsedSeconds;
 }
 
 function setExportState(enabled) {
@@ -185,7 +231,7 @@ function formatCellValue(value) {
   return { text, title: text, className: "" };
 }
 
-function renderResultsTable(payload) {
+function renderResultsTable(payload, elapsedSeconds) {
   const container = getResultsContainer();
   const rows = payload.rows;
   const columns = payload.columns;
@@ -198,7 +244,7 @@ function renderResultsTable(payload) {
       "neutral",
     );
     setResultStatus(
-      payload.message || "Statement executed successfully.",
+      `${payload.message || "Statement executed successfully."} (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
       "neutral",
     );
     return;
@@ -208,7 +254,10 @@ function renderResultsTable(payload) {
     setResultMetrics(0, 0);
     setExportState(false);
     renderPlaceholder("No documents matched the query.", "neutral");
-    setResultStatus("Query completed with no matching documents.", "neutral");
+    setResultStatus(
+      `Query completed with no matching documents. (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+      "neutral",
+    );
     return;
   }
 
@@ -263,17 +312,27 @@ function renderResultsTable(payload) {
   setResultMetrics(payload.rowCount, columns.length);
   setExportState(true);
   setResultStatus(
-    payload.message ||
-      `Showing ${payload.rowCount} document${payload.rowCount === 1 ? "" : "s"} from MongoDB.`,
+    `${
+      payload.message ||
+      `Showing ${payload.rowCount} document${payload.rowCount === 1 ? "" : "s"} from MongoDB.`
+    } (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
     "success",
   );
 }
 
+var PLAY_ICON = '<svg viewBox="0 0 16 16" focusable="false"><path d="M3 2.5v11l10-5.5-10-5.5z" /></svg>';
+var STOP_ICON = '<svg viewBox="0 0 16 16" focusable="false"><rect x="3" y="3" width="10" height="10" rx="1" /></svg>';
+
 function resetRunButton(label = "Run") {
   const runBtn = document.getElementById("runBtn");
   const runBtnLabel = runBtn.querySelector(".btn-label");
+  const runBtnIcon = runBtn.querySelector(".icon");
   runBtn.disabled = false;
+  runBtn.classList.remove("btn-danger");
+  runBtn.classList.add("btn-primary");
+  runBtn.title = "Run Query (Ctrl/Cmd+Enter)";
   runBtnLabel.textContent = label;
+  runBtnIcon.innerHTML = PLAY_ICON;
 }
 
 function getContainerGap(container) {
@@ -286,22 +345,20 @@ function getContainerGap(container) {
 
 function setupPaneResizer(initialHeight) {
   const container = document.querySelector(".container");
-  const header = document.querySelector(".header");
   const queryPane = document.querySelector(".query-pane");
   const resultsPane = document.querySelector(".results-pane");
   const divider = document.getElementById("paneDivider");
 
-  if (!container || !header || !queryPane || !resultsPane || !divider) {
+  if (!container || !queryPane || !resultsPane || !divider) {
     return;
   }
 
   const clampQueryHeight = (height) => {
     const gap = getContainerGap(container);
     const containerHeight = container.clientHeight;
-    const headerHeight = header.getBoundingClientRect().height;
     const dividerHeight = divider.getBoundingClientRect().height;
     const availablePaneHeight =
-      containerHeight - headerHeight - dividerHeight - gap * 3;
+      containerHeight - dividerHeight - gap * 2;
     const maxQueryHeight = Math.max(
       MIN_QUERY_PANE_HEIGHT,
       availablePaneHeight - MIN_RESULTS_PANE_HEIGHT,
@@ -417,6 +474,7 @@ document.addEventListener("DOMContentLoaded", () => {
       "Cmd-Enter": executeQuery,
     },
   });
+  sqlEditor.on("contextmenu", (cm, e) => e.preventDefault());
   setTimeout(() => sqlEditor.refresh(), 0);
   const saved = vscode.getState();
   if (saved && saved.query) {
@@ -497,38 +555,59 @@ function setupEventListeners() {
   });
 }
 
+function applyLimit(query) {
+  const limitSelect = document.getElementById("limitSelect");
+  const limitValue = limitSelect ? limitSelect.value : "";
+  if (!limitValue) {
+    return query;
+  }
+  // Check if query already has a LIMIT clause
+  if (/\bLIMIT\s+\d+/i.test(query)) {
+    return query;
+  }
+  // Strip trailing semicolons, add LIMIT, re-add semicolon
+  const trimmed = query.replace(/;\s*$/, "");
+  return `${trimmed} LIMIT ${limitValue}`;
+}
+
 function executeQuery() {
-  const query = sqlEditor.getValue().trim();
+  const rawQuery = sqlEditor.getValue().trim();
 
   if (!activeConnection) {
     setResultStatus("Connection is not initialized.", "error");
     return;
   }
 
-  if (!query) {
+  if (!rawQuery) {
     setResultStatus("Query is empty.", "error");
     return;
   }
 
-  // Disable button and show loading state
+  if (isQueryExecuting) {
+    // User clicked stop — send cancel
+    vscode.postMessage({ command: "cancelQuery" });
+    return;
+  }
+
+  const query = applyLimit(rawQuery);
+
+  // Switch button to stop mode
   const executeBtn = document.getElementById("runBtn");
   const executeBtnLabel = executeBtn.querySelector(".btn-label");
-  const originalText = executeBtnLabel.textContent;
-  executeBtn.disabled = true;
-  executeBtnLabel.textContent = "Executing...";
+  const executeBtnIcon = executeBtn.querySelector(".icon");
+  executeBtn.classList.remove("btn-primary");
+  executeBtn.classList.add("btn-danger");
+  executeBtn.title = "Stop Execution";
+  executeBtnLabel.textContent = "Stop";
+  executeBtnIcon.innerHTML = STOP_ICON;
+  isQueryExecuting = true;
   const targetName = activeConnection?.name || "selected connection";
-  setResultStatus(`Running query against ${targetName}...`, "loading");
+  startExecutionStatus(targetName);
 
   vscode.postMessage({
     command: "executeQuery",
     query,
   });
-
-  // Reset button after a timeout (will be re-enabled when results arrive)
-  setTimeout(() => {
-    executeBtn.disabled = false;
-    executeBtnLabel.textContent = originalText;
-  }, 30000);
 }
 
 function exportResults(format) {
@@ -544,12 +623,13 @@ function exportResults(format) {
   });
 }
 
-function displayResults(data) {
+function displayResults(data, elapsedSeconds) {
   const payload = normalizeQueryPayload(data);
   currentResults = payload.rows;
-  renderResultsTable(payload);
+  renderResultsTable(payload, elapsedSeconds);
   renderResultsJson(payload.rows);
   resetRunButton("Run");
+  isQueryExecuting = false;
 }
 
 function handleMessage(event) {
@@ -575,16 +655,23 @@ function handleMessage(event) {
       );
       break;
     case "queryResults":
-      displayResults(message.data);
+      displayResults(message.data, stopExecutionStatus());
       break;
     case "queryError":
+      {
+      const elapsedSeconds = stopExecutionStatus();
       currentResults = [];
       setResultMetrics(0, 0);
       setExportState(false);
       renderPlaceholder(message.error || "Query failed.", "error");
       renderResultsJson({ error: message.error || "Query failed." });
-      setResultStatus(`Query error: ${message.error}`, "error");
+      setResultStatus(
+        `Query error: ${message.error} (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+        "error",
+      );
       resetRunButton("Run");
+      isQueryExecuting = false;
+      }
       break;
   }
 }

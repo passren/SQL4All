@@ -9,19 +9,18 @@
   </head>
   <body>
     <div class="container">
-      <header class="header">
-        <div>
-          <h3>
-            ${connectionName} · ${connectionHost}:${connectionPort} /
-            ${databaseName}
-          </h3>
-        </div>
-      </header>
-
       <section class="query-pane">
         <div class="query-toolbar">
           <div class="section-title">SQL Editor</div>
           <div class="query-actions">
+            <label class="limit-label" for="limitSelect">Limit</label>
+            <select id="limitSelect" class="limit-select" title="Row limit">
+              <option value="10" selected>10</option>
+              <option value="100">100</option>
+              <option value="1000">1000</option>
+              <option value="10000">10000</option>
+              <option value="">No Limit</option>
+            </select>
             <button
               id="runBtn"
               class="btn btn-small btn-icon btn-primary"

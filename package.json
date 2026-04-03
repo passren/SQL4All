@@ -27,9 +27,9 @@
       },
       {
         "command": "sql4all.connectConnection",
-        "title": "Connect",
+        "title": "Open SQL Executor",
         "category": "SQL4ALL",
-        "icon": "$(plug)"
+        "icon": "$(play)"
       },
       {
         "command": "sql4all.editConnection",

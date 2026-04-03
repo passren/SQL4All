@@ -1,119 +1,38 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
-import { spawn } from "child_process";
+import { spawn, ChildProcess } from "child_process";
+import {
+  DbConnection,
+  ConnectionStore,
+  normalizeConnection,
+  formatConnectionSummary,
+  formatConnectionTooltip,
+  EXTENSION_NAMESPACE,
+  BRAND_NAME,
+  CONNECTION_VIEW_ID,
+  CONNECTION_ITEM_CONTEXT,
+  CONNECTION_STORE_KEY,
+  PYTHON_SETTING_KEY,
+  READY_MARKER_FILE,
+  INSTALLED_DRIVERS_STORE_KEY,
+  NEW_CONNECTION,
+  TABLE_ITEM_CONTEXT,
+} from "./types";
+import {
+  ConnectionManagerServices,
+  addConnection,
+  openConnectionEditor,
+} from "./connectionManager";
+import {
+  initSqlExecutor,
+  createOrShowPanel,
+  removeConnectionState,
+} from "./sqlExecutor";
 
 declare const process: any;
 
-let globalState: vscode.Memento;
-
-interface DbConnection {
-  host: string;
-  port?: number;
-  database: string;
-  username: string;
-  password: string;
-  driver?: string;
-  connectionString?: string;
-  additionalParameters?: Record<string, string>;
-}
-
-type ConnectionStore = Record<string, DbConnection>;
-
-function normalizeAdditionalParameters(
-  value: unknown,
-): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-
-  const normalized: Record<string, string> = {};
-  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = String(key || "").trim();
-    if (!normalizedKey) {
-      continue;
-    }
-
-    normalized[normalizedKey] = String(rawValue ?? "");
-  }
-
-  return normalized;
-}
-
-function normalizeConnection(raw: unknown): DbConnection {
-  const source = (raw && typeof raw === "object")
-    ? (raw as Record<string, unknown>)
-    : {};
-
-  const rawAdditionalParameters =
-    source.additionalParameters
-    ?? source.additional_parameters
-    ?? source.params
-    ?? source.parameters;
-
-  const normalizedPort = Number(source.port);
-
-  return {
-    host: String(source.host ?? "localhost"),
-    port: Number.isInteger(normalizedPort) && normalizedPort > 0
-      ? normalizedPort
-      : undefined,
-    database: String(source.database ?? ""),
-    username: String(source.username ?? ""),
-    password: String(source.password ?? ""),
-    driver: String(source.driver ?? source.dbDriver ?? "").trim(),
-    connectionString: String(source.connectionString ?? "").trim() || undefined,
-    additionalParameters: normalizeAdditionalParameters(rawAdditionalParameters),
-  };
-}
-
-function formatConnectionSummary(
-  connection: DbConnection,
-): string {
-  if (connection.connectionString) {
-    return connection.connectionString;
-  }
-
-  const host = connection.host || "";
-  const portSegment = Number.isInteger(connection.port)
-    ? `:${connection.port}`
-    : "";
-  const databaseSegment = connection.database?.trim()
-    ? `/${connection.database.trim()}`
-    : "";
-
-  return `${host}${portSegment}${databaseSegment}`;
-}
-
-function formatConnectionTooltip(
-  connectionName: string,
-  summary: string,
-  connection: DbConnection,
-): string {
-  const lines = [connectionName, summary];
-  if (connection.database?.trim()) {
-    lines.push(`DB: ${connection.database.trim()}`);
-  }
-
-  return lines.filter(Boolean).join("\n");
-}
-
-const EXTENSION_NAMESPACE = "sql4all";
-const BRAND_NAME = "SQL4ALL";
-const CONNECTION_VIEW_ID = `${EXTENSION_NAMESPACE}.connections`;
-const CONNECTION_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.connectionItem`;
-const CONNECTION_STORE_KEY = `${EXTENSION_NAMESPACE}.connections`;
-const QUERY_DRAFTS_STORE_KEY = `${EXTENSION_NAMESPACE}.queryDrafts`;
-const QUERY_LAYOUTS_STORE_KEY = `${EXTENSION_NAMESPACE}.queryLayouts`;
-const PYTHON_SETTING_KEY = "pythonPath";
-const READY_MARKER_FILE = ".sql4all-ready";
-
-const INSTALLED_DRIVERS_STORE_KEY = `${EXTENSION_NAMESPACE}.installedDrivers`;
-
-const NEW_CONNECTION = "__NEW_CONNECTION__";
-const TABLE_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.tableItem`;
 const panelsByConnection = new Map<string, vscode.WebviewPanel>();
-let connectionEditorPanel: vscode.WebviewPanel | undefined;
 let connectionTreeView: vscode.TreeView<TreeItem> | undefined;
 let connectionTreeProviderRef: ConnectionTreeProvider | undefined;
 let pythonEnvPath: string | undefined;
@@ -138,11 +57,6 @@ class ConnectionItem extends vscode.TreeItem {
     this.tooltip = formatConnectionTooltip(connectionName, resolvedSummary, connection);
     this.contextValue = CONNECTION_ITEM_CONTEXT;
     this.iconPath = iconPath ?? new vscode.ThemeIcon("database");
-    this.command = {
-      command: `${EXTENSION_NAMESPACE}.connectConnection`,
-      title: "Connect",
-      arguments: [this],
-    };
   }
 }
 
@@ -219,6 +133,10 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 
   findItem(connectionName: string): ConnectionItem | undefined {
     return this.cachedItems.find((item) => item.connectionName === connectionName);
+  }
+
+  hasTablesCached(connectionName: string): boolean {
+    return this.tableCache.has(connectionName);
   }
 
   refreshConnectionTables(connectionName: string): void {
@@ -371,7 +289,6 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 export function activate(context: vscode.ExtensionContext) {
   const venvDir = path.join(context.globalStorageUri.fsPath, "python-env");
   console.log(`[SQL4All] venv path: ${venvDir}`);
-  globalState = context.globalState;
   const connectionTreeProvider = new ConnectionTreeProvider(context);
   connectionTreeProviderRef = connectionTreeProvider;
 
@@ -379,6 +296,28 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: connectionTreeProvider,
   });
   context.subscriptions.push(connectionTreeView);
+
+  initSqlExecutor({
+    panelsByConnection,
+    getDriverIcon: (conn) => connectionTreeProviderRef?.getDriverIcon(conn),
+    revealConnection: (name) => revealConnection(name),
+    runPythonScript,
+  });
+
+  const editorServices: ConnectionManagerServices = {
+    getConnection: (name) => connectionTreeProvider.getConnection(name),
+    upsertConnection: (name, conn) => connectionTreeProvider.upsertConnection(name, conn),
+    deleteConnection: (name) => connectionTreeProvider.deleteConnection(name),
+    removeConnectionState: (ctx, name) => removeConnectionState(ctx, name),
+    panelsByConnection,
+    revealInTree: (name) => revealConnectionInTree(connectionTreeProvider, name),
+    ensurePythonEnvironment,
+    ensureDriverInstalled,
+    runProcess,
+    fetchDriverVersion,
+    markDriverInstalled,
+    getInstalledDrivers,
+  };
 
   const openPanelDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.openQueryPanel`,
@@ -389,7 +328,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       if (selected === NEW_CONNECTION) {
-        await addConnection(context, connectionTreeProvider);
+        await addConnection(context, editorServices);
         return;
       }
 
@@ -407,7 +346,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const addConnectionDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.addConnection`,
-    () => addConnection(context, connectionTreeProvider),
+    () => addConnection(context, editorServices),
   );
 
   const connectConnectionDisposable = vscode.commands.registerCommand(
@@ -420,20 +359,12 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      connectionTreeProvider.refreshConnectionTables(item.connectionName);
-      try {
-        await connectionTreeProvider.getChildren(item);
-        await connectionTreeView?.reveal(item, {
-          expand: true,
-          select: true,
-          focus: false,
-        });
-        createOrShowPanel(context, item.connectionName, item.connection);
-      } catch (err: any) {
-        vscode.window.showErrorMessage(
-          `Cannot connect to "${item.connectionName}": ${err?.message || String(err)}`,
-        );
+      // Ensure tables are listed (expand tree node) before opening executor
+      if (!connectionTreeProvider.hasTablesCached(item.connectionName) && connectionTreeView) {
+        await connectionTreeView.reveal(item, { expand: true, select: false, focus: false });
       }
+
+      createOrShowPanel(context, item.connectionName, item.connection);
     },
   );
 
@@ -446,7 +377,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       void openConnectionEditor(
         context,
-        connectionTreeProvider,
+        editorServices,
         item.connectionName,
         item.connection,
       );
@@ -591,566 +522,6 @@ function revealConnection(connectionName: string): void {
   }
 }
 
-function createOrShowPanel(
-  context: vscode.ExtensionContext,
-  connectionName: string,
-  connection: DbConnection,
-) {
-  const existingPanel = panelsByConnection.get(connectionName);
-  if (existingPanel) {
-    existingPanel.reveal(vscode.ViewColumn.Active);
-    return;
-  }
-
-  const panel = vscode.window.createWebviewPanel(
-    "sql4allQuery",
-    `${BRAND_NAME} - ${connectionName}`,
-    vscode.ViewColumn.Active,
-    {
-      enableScripts: true,
-      retainContextWhenHidden: true,
-      localResourceRoots: [
-        vscode.Uri.file(path.join(context.extensionPath, "media")),
-      ],
-    },
-  );
-
-  panelsByConnection.set(connectionName, panel);
-
-  // Set tab icon based on database driver
-  if (connectionTreeProviderRef) {
-    const iconUri = connectionTreeProviderRef.getDriverIcon(connection);
-    if (iconUri) {
-      panel.iconPath = iconUri;
-    }
-  }
-
-  panel.onDidChangeViewState(() => {
-    if (panel.active) {
-      revealConnection(connectionName);
-    }
-  });
-
-  panel.webview.onDidReceiveMessage(
-    (message: any) =>
-      handleWebviewMessage(message, context, panel, connectionName, connection),
-    undefined,
-  );
-
-  panel.onDidDispose(() => {
-    panelsByConnection.delete(connectionName);
-  }, undefined);
-
-  updateWebviewContent(context, panel, connectionName, connection);
-}
-
-function updateWebviewContent(
-  context: vscode.ExtensionContext,
-  panel: vscode.WebviewPanel,
-  connectionName: string,
-  connection: DbConnection,
-) {
-  const htmlPath = path.join(
-    context.extensionPath,
-    "media",
-    "sql-executor.html",
-  );
-
-  try {
-    let html = fs.readFileSync(htmlPath, "utf8");
-
-    // Replace paths for resources
-    const cssPath = panel.webview.asWebviewUri(
-      vscode.Uri.file(
-        path.join(context.extensionPath, "media", "sql-executor.css"),
-      ),
-    );
-    const jsPath = panel.webview.asWebviewUri(
-      vscode.Uri.file(
-        path.join(context.extensionPath, "media", "sql-executor.js"),
-      ),
-    );
-    const cmCssPath = panel.webview.asWebviewUri(
-      vscode.Uri.file(
-        path.join(context.extensionPath, "media", "codemirror.min.css"),
-      ),
-    );
-    const cmJsPath = panel.webview.asWebviewUri(
-      vscode.Uri.file(
-        path.join(context.extensionPath, "media", "codemirror.min.js"),
-      ),
-    );
-    const cmSqlPath = panel.webview.asWebviewUri(
-      vscode.Uri.file(path.join(context.extensionPath, "media", "sql.min.js")),
-    );
-
-    html = html
-      .replace("${cssPath}", cssPath.toString())
-      .replace("${jsPath}", jsPath.toString())
-      .replace("${cmCssPath}", cmCssPath.toString())
-      .replace("${cmJsPath}", cmJsPath.toString())
-      .replace("${cmSqlPath}", cmSqlPath.toString())
-      .replace("${connectionName}", escapeHtml(connectionName))
-      .replace("${connectionHost}", escapeHtml(connection.host))
-      .replace(
-        "${connectionPort}",
-        Number.isInteger(connection.port) ? String(connection.port) : "",
-      )
-      .replace("${databaseName}", escapeHtml(connection.database));
-
-    panel.webview.html = html;
-  } catch (error) {
-    vscode.window.showErrorMessage(`Failed to load webview: ${error}`);
-  }
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function getQueryDrafts(context: vscode.ExtensionContext): Record<string, string> {
-  const current = context.globalState.get(QUERY_DRAFTS_STORE_KEY);
-  return (current as Record<string, string> | undefined) ?? {};
-}
-
-function getQueryLayouts(context: vscode.ExtensionContext): Record<string, number> {
-  const current = context.globalState.get(QUERY_LAYOUTS_STORE_KEY);
-  return (current as Record<string, number> | undefined) ?? {};
-}
-
-async function saveQueryDraft(
-  context: vscode.ExtensionContext,
-  connectionName: string,
-  query: string,
-): Promise<void> {
-  const drafts = getQueryDrafts(context);
-  drafts[connectionName] = query;
-  await context.globalState.update(QUERY_DRAFTS_STORE_KEY, drafts);
-}
-
-async function saveQueryPaneHeight(
-  context: vscode.ExtensionContext,
-  connectionName: string,
-  queryPaneHeight: number,
-): Promise<void> {
-  const layouts = getQueryLayouts(context);
-  layouts[connectionName] = queryPaneHeight;
-  await context.globalState.update(QUERY_LAYOUTS_STORE_KEY, layouts);
-}
-
-async function removeConnectionState(
-  context: vscode.ExtensionContext,
-  connectionName: string,
-): Promise<void> {
-  const drafts = getQueryDrafts(context);
-  if (Object.prototype.hasOwnProperty.call(drafts, connectionName)) {
-    delete drafts[connectionName];
-    await context.globalState.update(QUERY_DRAFTS_STORE_KEY, drafts);
-  }
-
-  const layouts = getQueryLayouts(context);
-  if (Object.prototype.hasOwnProperty.call(layouts, connectionName)) {
-    delete layouts[connectionName];
-    await context.globalState.update(QUERY_LAYOUTS_STORE_KEY, layouts);
-  }
-}
-
-async function handleWebviewMessage(
-  message: any,
-  context: vscode.ExtensionContext,
-  panel: vscode.WebviewPanel,
-  connectionName: string,
-  connection: DbConnection,
-) {
-  switch (message.command) {
-    case "ready":
-      const drafts = getQueryDrafts(context);
-      const layouts = getQueryLayouts(context);
-      panel.webview.postMessage({
-        command: "initConnection",
-        data: {
-          name: connectionName,
-          host: connection.host,
-          port: connection.port,
-          database: connection.database,
-          lastQuery: drafts[connectionName] || "",
-          queryPaneHeight: layouts[connectionName],
-        },
-      });
-      break;
-    case "updateQueryDraft":
-      await saveQueryDraft(
-        context,
-        connectionName,
-        typeof message.query === "string" ? message.query : "",
-      );
-      break;
-    case "executeQuery":
-      await saveQueryDraft(
-        context,
-        connectionName,
-        typeof message.query === "string" ? message.query : "",
-      );
-      await executeQuery(
-        message.query,
-        message.paramsRaw,
-        connectionName,
-        connection,
-        context,
-        panel,
-      );
-      break;
-    case "updatePaneLayout":
-      if (
-        typeof message.queryPaneHeight === "number" &&
-        Number.isFinite(message.queryPaneHeight)
-      ) {
-        await saveQueryPaneHeight(
-          context,
-          connectionName,
-          message.queryPaneHeight,
-        );
-      }
-      break;
-    case "exportResults":
-      exportResults(message.data, message.format);
-      break;
-  }
-}
-
-async function addConnection(
-  context: vscode.ExtensionContext,
-  treeProvider: ConnectionTreeProvider,
-): Promise<void> {
-  await openConnectionEditor(context, treeProvider);
-}
-
-async function openConnectionEditor(
-  context: vscode.ExtensionContext,
-  treeProvider: ConnectionTreeProvider,
-  editingName?: string,
-  editingConnection?: DbConnection,
-): Promise<void> {
-  if (connectionEditorPanel) {
-    connectionEditorPanel.dispose();
-  }
-
-  connectionEditorPanel = vscode.window.createWebviewPanel(
-    "sql4allConnectionEditor",
-    editingName ? `Edit Connection - ${editingName}` : "New Connection",
-    vscode.ViewColumn.Active,
-    {
-      enableScripts: true,
-      retainContextWhenHidden: false,
-      localResourceRoots: [
-        vscode.Uri.file(path.join(context.extensionPath, "media")),
-      ],
-    },
-  );
-
-  const initial: { name: string; connection: DbConnection } = {
-    name: editingName ?? "",
-    connection: editingConnection
-      ? normalizeConnection(editingConnection)
-      : {
-      host: "localhost",
-      port: 0,
-      database: "",
-      username: "",
-      password: "",
-      driver: "",
-      additionalParameters: {},
-    },
-  };
-
-  connectionEditorPanel.webview.html = getConnectionEditorHtml(
-    path.join(context.extensionPath, "media"),
-    connectionEditorPanel.webview,
-    initial,
-    Boolean(editingName),
-    context,
-  );
-
-  if (editingName) {
-    const editorPanelRef = connectionEditorPanel;
-    editorPanelRef.onDidChangeViewState(() => {
-      if (editorPanelRef.active && editingName) {
-        revealConnectionInTree(treeProvider, editingName);
-      }
-    });
-    revealConnectionInTree(treeProvider, editingName);
-  }
-
-  connectionEditorPanel.webview.onDidReceiveMessage(async (message: any) => {
-    if (!connectionEditorPanel) {
-      return;
-    }
-
-    if (message.command === "cancel") {
-      connectionEditorPanel.dispose();
-      return;
-    }
-
-    if (message.command === "reloadDriver") {
-      const driverName = (message.driver || "").trim();
-      if (!driverName) {
-        return;
-      }
-      try {
-        connectionEditorPanel.webview.postMessage({
-          command: "setupProgress",
-          message: `Upgrading driver: ${driverName}...`,
-          inProgress: true,
-        });
-
-        const venvPython = await ensurePythonEnvironment(context);
-        await runProcess(venvPython, [
-          "-m",
-          "pip",
-          "install",
-          "--upgrade",
-          "--quiet",
-          driverName,
-        ]);
-        const version = await fetchDriverVersion(context, driverName);
-        await markDriverInstalled(context, driverName, version);
-
-        connectionEditorPanel.webview.postMessage({
-          command: "setupProgress",
-          message: "",
-          inProgress: false,
-        });
-        connectionEditorPanel.webview.postMessage({
-          command: "driverStatus",
-          installed: true,
-          version: version || null,
-        });
-        vscode.window.showInformationMessage(
-          `Driver ${driverName} upgraded successfully.`,
-        );
-      } catch (err: any) {
-        connectionEditorPanel.webview.postMessage({
-          command: "setupProgress",
-          message: "",
-          inProgress: false,
-        });
-        connectionEditorPanel.webview.postMessage({
-          command: "saveError",
-          error: `Driver upgrade failed: ${err?.message || String(err)}`,
-        });
-      }
-      return;
-    }
-
-    if (message.command !== "save") {
-      return;
-    }
-
-    const payload = message.data as {
-      name: string;
-      host: string;
-      port?: number;
-      database: string;
-      username: string;
-      password: string;
-      driver?: string;
-      connectionString?: string;
-      additionalParameters?: Record<string, string>;
-    };
-
-    const name = payload.name.trim();
-    const host = payload.host.trim();
-    const database = payload.database.trim();
-    const hasPort = typeof payload.port === "number" && Number.isInteger(payload.port);
-    const port = hasPort ? payload.port : undefined;
-    const invalidPort =
-      hasPort && (port === undefined || port <= 0 || port > 65535);
-
-    if (!name || !host || invalidPort || name.length > 20) {
-      connectionEditorPanel.webview.postMessage({
-        command: "saveError",
-        error: !name || !host
-          ? "Please provide a valid name and host."
-          : name.length > 20
-            ? "Connection name must be 20 characters or less."
-            : "Port must be between 1 and 65535.",
-      });
-      return;
-    }
-
-    const existingConnection = treeProvider.getConnection(name);
-    const isDuplicateName =
-      Boolean(existingConnection) && (!editingName || editingName !== name);
-
-    if (isDuplicateName) {
-      connectionEditorPanel.webview.postMessage({
-        command: "saveError",
-        error: `Connection "${name}" already exists.`,
-      });
-      return;
-    }
-
-    if (editingName && editingName !== name) {
-      await treeProvider.deleteConnection(editingName);
-      await removeConnectionState(context, editingName);
-      const existingPanel = panelsByConnection.get(editingName);
-      if (existingPanel) {
-        existingPanel.dispose();
-      }
-    }
-
-    const driverValue = payload.driver?.trim() || "";
-
-    // Ensure Python venv + driver are installed before saving
-    if (driverValue) {
-      try {
-        await ensureDriverInstalled(
-          context,
-          driverValue,
-          (message: string) => {
-            if (connectionEditorPanel) {
-              connectionEditorPanel.webview.postMessage({
-                command: "setupProgress",
-                message,
-                inProgress: true,
-              });
-            }
-          },
-        );
-
-        if (connectionEditorPanel) {
-          connectionEditorPanel.webview.postMessage({
-            command: "setupProgress",
-            message: "",
-            inProgress: false,
-          });
-        }
-      } catch (setupError: any) {
-        if (connectionEditorPanel) {
-          connectionEditorPanel.webview.postMessage({
-            command: "setupProgress",
-            message: "",
-            inProgress: false,
-          });
-          connectionEditorPanel.webview.postMessage({
-            command: "saveError",
-            error: `Python setup failed: ${setupError?.message || String(setupError)}`,
-          });
-        }
-        return;
-      }
-    }
-
-    await treeProvider.upsertConnection(name, {
-      host,
-      port,
-      database,
-      username: payload.username?.trim() ?? "",
-      password: payload.password ?? "",
-      driver: driverValue,
-      connectionString: payload.connectionString?.trim() || undefined,
-      additionalParameters: payload.additionalParameters ?? {},
-    });
-
-    vscode.window.showInformationMessage(
-      editingName
-        ? `Connection "${name}" updated.`
-        : `Connection "${name}" created.`,
-    );
-
-    connectionEditorPanel.dispose();
-  }, undefined);
-
-  connectionEditorPanel.onDidDispose(() => {
-    connectionEditorPanel = undefined;
-  });
-}
-
-function getConnectionEditorHtml(
-  mediaPath: string,
-  webview: vscode.Webview,
-  initial: { name: string; connection: DbConnection },
-  isEdit: boolean,
-  context: vscode.ExtensionContext,
-): string {
-  const htmlPath = path.join(mediaPath, "connection-editor.html");
-  const cssPath = webview.asWebviewUri(
-    vscode.Uri.file(path.join(mediaPath, "connection-editor.css")),
-  );
-  const jsPath = webview.asWebviewUri(
-    vscode.Uri.file(path.join(mediaPath, "connection-editor.js")),
-  );
-  const initialPayload: {
-    name: string;
-    connection: DbConnection;
-    driverConfig?: {
-      databases: Record<
-        string,
-        { icon?: string; driver: string; default_port?: number; uri_template: string }
-      >;
-    };
-    installedDrivers?: Record<string, string | boolean>;
-  } = {
-    ...initial,
-  };
-  const defaultDriverConfig = {
-    databases: {
-      mongodb: {
-        driver: "pymongosql",
-        uri_template:
-          "mongodb://[username[:password]@]host[:port]/[database][?additionalParameters]",
-      },
-    },
-  };
-
-  let driverConfig = defaultDriverConfig;
-  try {
-    const driverConfigPath = path.join(mediaPath, "driver_config.json");
-    const raw = fs.readFileSync(driverConfigPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && parsed.databases) {
-      driverConfig = parsed;
-    }
-  } catch {
-    // Keep default config when file is missing or invalid.
-  }
-
-  // Inline icon SVG files as base64 data URIs so they load without CSP issues.
-  for (const dbConfig of Object.values(
-    driverConfig.databases as Record<string, { icon?: string }>,
-  )) {
-    if (dbConfig.icon) {
-      try {
-        const iconPath = path.join(mediaPath, dbConfig.icon);
-        const svgContent = fs.readFileSync(iconPath);
-        dbConfig.icon = `data:image/svg+xml;base64,${svgContent.toString("base64")}`;
-      } catch {
-        dbConfig.icon = undefined;
-      }
-    }
-  }
-
-  initialPayload.driverConfig = driverConfig;
-  initialPayload.installedDrivers = getInstalledDrivers(context);
-  const initialJson = JSON.stringify(initialPayload).replace(/</g, "\\u003c");
-
-  let html = fs.readFileSync(htmlPath, "utf8");
-  html = html
-    .replace("${title}", isEdit ? "Edit Connection" : "New Connection")
-    .replace("${heading}", isEdit ? "Update Connection" : "Create Connection")
-    .replace("${saveLabel}", isEdit ? "Update" : "Create")
-    .replace("${cssPath}", cssPath.toString())
-    .replace("${jsPath}", jsPath.toString())
-    .replace("${initialJson}", initialJson);
-
-  return html;
-}
-
 async function pickConnection(
   treeProvider: ConnectionTreeProvider,
 ): Promise<string | undefined> {
@@ -1188,76 +559,13 @@ async function pickConnection(
   return picked.label;
 }
 
-async function executeQuery(
-  queryText: string,
-  paramsRaw: string | undefined,
-  connectionName: string,
-  connection: DbConnection,
-  context: vscode.ExtensionContext,
-  panel: vscode.WebviewPanel,
-) {
-  try {
-    if (!queryText || !queryText.trim()) {
-      panel.webview.postMessage({
-        command: "queryError",
-        error: "Query is empty.",
-      });
-      return;
-    }
-
-    const pythonScript = path.join(
-      context.extensionPath,
-      "python",
-      "query_executor.py",
-    );
-
-    const connectionString = connection.connectionString || "";
-    if (!connectionString) {
-      panel.webview.postMessage({
-        command: "queryError",
-        error: "Connection string is not configured. Edit and re-save the connection.",
-      });
-      return;
-    }
-
-    // Prepare Python command arguments
-    const args = [
-      pythonScript,
-      `--connection-string=${connectionString}`,
-      `--query=${queryText}`,
-    ];
-
-    if (paramsRaw && paramsRaw.trim()) {
-      args.push(`--params=${paramsRaw}`);
-    }
-
-    const result = await runPythonScript(context, args);
-
-    // Parse and send results
-    const results = JSON.parse(result);
-
-    // Save to history
-    saveQueryToHistory(context, connectionName, queryText, results);
-
-    panel.webview.postMessage({
-      command: "queryResults",
-      data: results,
-    });
-  } catch (error: any) {
-    vscode.window.showErrorMessage(`Query execution failed: ${error.message}`);
-    panel.webview.postMessage({
-      command: "queryError",
-      error: error.message,
-    });
-  }
-}
-
 async function runPythonScript(
   context: vscode.ExtensionContext,
   scriptArgs: string[],
+  onSpawn?: (child: ChildProcess) => void,
 ): Promise<string> {
   const pythonExecutable = await ensurePythonEnvironment(context);
-  return runProcess(pythonExecutable, scriptArgs);
+  return runProcess(pythonExecutable, scriptArgs, onSpawn);
 }
 
 async function ensurePythonEnvironment(
@@ -1331,23 +639,6 @@ async function validatePythonVersion(
   }
 }
 
-function loadDriverConfig(
-  context: vscode.ExtensionContext,
-): Record<string, { driver?: string }> {
-  const mediaPath = path.join(context.extensionPath, "media");
-  const driverConfigPath = path.join(mediaPath, "driver_config.json");
-  try {
-    const raw = fs.readFileSync(driverConfigPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed?.databases && typeof parsed.databases === "object") {
-      return parsed.databases;
-    }
-  } catch {
-    // Ignore parse errors.
-  }
-  return {};
-}
-
 function getInstalledDrivers(
   context: vscode.ExtensionContext,
 ): Record<string, string | boolean> {
@@ -1371,15 +662,6 @@ function isDriverInstalled(
 ): boolean {
   const installed = getInstalledDrivers(context);
   return !!installed[pipPackage.toLowerCase()];
-}
-
-function getDriverInstalledVersion(
-  context: vscode.ExtensionContext,
-  pipPackage: string,
-): string | undefined {
-  const installed = getInstalledDrivers(context);
-  const val = installed[pipPackage.toLowerCase()];
-  return typeof val === "string" ? val : undefined;
 }
 
 async function fetchDriverVersion(
@@ -1654,9 +936,12 @@ function getWindowsCandidatePythonPaths(): string[] {
   return Array.from(new Set(candidates));
 }
 
-async function runProcess(command: string, args: string[]): Promise<string> {
+async function runProcess(command: string, args: string[], onSpawn?: (child: ChildProcess) => void): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const child = spawn(command, args);
+    if (onSpawn) {
+      onSpawn(child);
+    }
     let stdout = "";
     let stderr = "";
 
@@ -1672,7 +957,13 @@ async function runProcess(command: string, args: string[]): Promise<string> {
       reject(error);
     });
 
-    child.on("close", (code: number | null) => {
+    child.on("close", (code: number | null, signal: string | null) => {
+      if (signal) {
+        const err: any = new Error(`Process killed by signal ${signal}`);
+        err.killed = true;
+        reject(err);
+        return;
+      }
       if (code !== 0) {
         reject(new Error(stderr || `${command} exited with code ${code}`));
         return;
@@ -1681,91 +972,6 @@ async function runProcess(command: string, args: string[]): Promise<string> {
       resolve(stdout);
     });
   });
-}
-
-function saveQueryToHistory(
-  context: vscode.ExtensionContext,
-  connectionName: string,
-  queryText: string,
-  results: any,
-) {
-  const history = context.globalState.get("mongodb.queryHistory", []) as any[];
-  const resultCount = Array.isArray(results)
-    ? results.length
-    : Number.isInteger(results?.rowCount)
-      ? results.rowCount
-      : Array.isArray(results?.rows)
-        ? results.rows.length
-        : results
-          ? 1
-          : 0;
-  history.push({
-    query: queryText,
-    connection: connectionName,
-    timestamp: new Date().toISOString(),
-    resultCount,
-  });
-
-  // Keep only last 50 queries
-  if (history.length > 50) {
-    history.shift();
-  }
-
-  context.globalState.update("mongodb.queryHistory", history);
-}
-
-function exportResults(results: any[], format: string) {
-  vscode.window
-    .showOpenDialog({
-      canSelectFolders: true,
-      canSelectFiles: false,
-      canSelectMany: false,
-      title: "Select folder to export results",
-    })
-    .then((uris: vscode.Uri[] | undefined) => {
-      if (!uris || uris.length === 0) {
-        return;
-      }
-
-      const folderPath = uris[0].fsPath;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      let content = "";
-      let filename = "";
-
-      if (format === "csv") {
-        filename = `results_${timestamp}.csv`;
-        content = convertToCSV(results);
-      } else if (format === "json") {
-        filename = `results_${timestamp}.json`;
-        content = JSON.stringify(results, null, 2);
-      }
-
-      const filePath = path.join(folderPath, filename);
-      fs.writeFileSync(filePath, content);
-      vscode.window.showInformationMessage(`Results exported to ${filePath}`);
-    });
-}
-
-function convertToCSV(data: any[]): string {
-  if (data.length === 0) {
-    return "";
-  }
-
-  const headers = Object.keys(data[0]);
-  const csvHeaders = headers.join(",");
-  const csvRows = data.map((row) => {
-    return headers
-      .map((header) => {
-        const value = row[header];
-        if (typeof value === "string" && value.includes(",")) {
-          return `"${value.replace(/"/g, '""')}"`;
-        }
-        return value === null || value === undefined ? "" : value;
-      })
-      .join(",");
-  });
-
-  return [csvHeaders, ...csvRows].join("\n");
 }
 
 export function deactivate() {}
