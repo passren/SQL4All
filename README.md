@@ -2,8 +2,6 @@
 
 A powerful VS Code extension for querying SQL and NoSQL databases using standard SQL syntax. Write SQL queries and execute them against various supported database engines — powered by SQLAlchemy.
 
-## Demo
-
 ![SQL4ALL Demo](media/screenshots/demo.gif)
 
 ## Features
