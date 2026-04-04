@@ -1,4 +1,4 @@
-# <img src="media/icons/sql4all-icon.svg" alt="" width="64" height="64"> SQL4ALL
+# <img src="media/icons/sql4all-icon.png" alt="" width="64" height="64"> SQL4ALL
 
 ![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
