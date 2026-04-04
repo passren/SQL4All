@@ -14,6 +14,9 @@ let applySavedPaneHeight = null;
 let isQueryExecuting = false;
 let queryExecutionStartedAt = null;
 let queryExecutionTimer = null;
+let recentFiles = [];
+let linkedFilePath = null;
+const MAX_RECENT_FILES = 10;
 
 const MIN_QUERY_PANE_HEIGHT = 80;
 const MIN_RESULTS_PANE_HEIGHT = 140;
@@ -538,6 +541,44 @@ function setupEventListeners() {
     .getElementById("exportJsonBtn")
     .addEventListener("click", () => exportResults("json"));
 
+  // File operations
+  document.getElementById("openFileBtn").addEventListener("click", () => {
+    vscode.postMessage({ command: "openFile" });
+  });
+  document.getElementById("saveFileBtn").addEventListener("click", () => {
+    vscode.postMessage({
+      command: "saveFile",
+      content: sqlEditor.getValue(),
+    });
+  });
+  document.getElementById("saveAsFileBtn").addEventListener("click", () => {
+    vscode.postMessage({
+      command: "saveFileAs",
+      content: sqlEditor.getValue(),
+    });
+  });
+  document.getElementById("formatBtn").addEventListener("click", () => {
+    const selection = sqlEditor.getSelection();
+    if (selection) {
+      vscode.postMessage({ command: "formatSql", sql: selection });
+    }
+  });
+
+  // Recent files dropdown
+  const recentFilesBtn = document.getElementById("recentFilesBtn");
+  const recentFilesMenu = document.getElementById("recentFilesMenu");
+  recentFilesBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    renderRecentFilesMenu();
+    recentFilesMenu.classList.toggle("hidden");
+  });
+  document.addEventListener("click", () => {
+    recentFilesMenu.classList.add("hidden");
+  });
+  recentFilesMenu.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
   // Message handler from extension
   window.addEventListener("message", handleMessage);
 
@@ -571,7 +612,11 @@ function applyLimit(query) {
 }
 
 function executeQuery() {
-  const rawQuery = sqlEditor.getValue().trim();
+  // Get selected text, or current line if no selection
+  const selection = sqlEditor.getSelection();
+  const rawQuery = selection
+    ? selection.trim()
+    : sqlEditor.getLine(sqlEditor.getCursor().line).trim();
 
   if (!activeConnection) {
     setResultStatus("Connection is not initialized.", "error");
@@ -641,6 +686,9 @@ function handleMessage(event) {
       if (typeof activeConnection.lastQuery === "string") {
         sqlEditor.setValue(activeConnection.lastQuery);
       }
+      if (Array.isArray(activeConnection.recentFiles)) {
+        recentFiles = activeConnection.recentFiles;
+      }
       if (
         typeof activeConnection.queryPaneHeight === "number" &&
         Number.isFinite(activeConnection.queryPaneHeight) &&
@@ -673,7 +721,59 @@ function handleMessage(event) {
       isQueryExecuting = false;
       }
       break;
+    case "fileOpened":
+      if (typeof message.content === "string") {
+        sqlEditor.setValue(message.content);
+      }
+      if (typeof message.filePath === "string") {
+        linkedFilePath = message.filePath;
+        addRecentFile(message.filePath);
+      }
+      break;
+    case "fileLinked":
+      if (typeof message.filePath === "string") {
+        linkedFilePath = message.filePath;
+        addRecentFile(message.filePath);
+      }
+      break;
+    case "formatSqlResult":
+      sqlEditor.replaceSelection(message.formatted);
+      break;
   }
+}
+
+function addRecentFile(filePath) {
+  recentFiles = recentFiles.filter((f) => f !== filePath);
+  recentFiles.unshift(filePath);
+  if (recentFiles.length > MAX_RECENT_FILES) {
+    recentFiles = recentFiles.slice(0, MAX_RECENT_FILES);
+  }
+}
+
+function renderRecentFilesMenu() {
+  const menu = document.getElementById("recentFilesMenu");
+  menu.innerHTML = "";
+  if (recentFiles.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "recent-files-empty";
+    empty.textContent = "No recent files";
+    menu.appendChild(empty);
+    return;
+  }
+  recentFiles.forEach((filePath) => {
+    const item = document.createElement("button");
+    item.className = "recent-file-item";
+    if (filePath === linkedFilePath) {
+      item.classList.add("is-linked");
+    }
+    item.title = filePath;
+    item.textContent = filePath;
+    item.addEventListener("click", () => {
+      menu.classList.add("hidden");
+      vscode.postMessage({ command: "openRecentFile", filePath });
+    });
+    menu.appendChild(item);
+  });
 }
 
 // Restore state on reload

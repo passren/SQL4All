@@ -39,13 +39,23 @@ function findDatabaseTypeByDriver(driverName) {
   return "";
 }
 
+function getSelectedDialect() {
+  const dialectInput = document.getElementById("dialectInput");
+  if (dialectInput && !dialectInput.hidden) {
+    return dialectInput.value.trim();
+  }
+  return document.getElementById("dialect")?.value || "";
+}
+
 function buildConnectionStringFromTemplate(template, options) {
   const normalizedTemplate = String(template || "");
   const rawDatabase = options.database
     ? String(options.database)
     : "";
+  const dialect = options.dialect || "";
 
   return normalizedTemplate
+    .replace("dialect", dialect)
     .replace("[username[:password]@]", options.credentials)
     .replace("host", options.host)
     .replace("[:port]", options.port ? `:${options.port}` : "")
@@ -54,6 +64,36 @@ function buildConnectionStringFromTemplate(template, options) {
     .replace("[database]", rawDatabase)
     .replace("[service_name]", rawDatabase)
     .replace("[?additionalParameters]", "");
+}
+
+function populateDialects(dbType) {
+  const dialectSelect = document.getElementById("dialect");
+  if (!dialectSelect) {
+    return;
+  }
+
+  dialectSelect.innerHTML = "";
+
+  const dialects = (dbType && driverConfig.databases && driverConfig.databases[dbType])
+    ? (driverConfig.databases[dbType].dialects || [])
+    : [];
+
+  if (dialects.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "-- No dialects available --";
+    dialectSelect.appendChild(opt);
+    return;
+  }
+
+  for (const d of dialects) {
+    const opt = document.createElement("option");
+    opt.value = d;
+    opt.textContent = d;
+    dialectSelect.appendChild(opt);
+  }
+
+  dialectSelect.value = dialects[0];
 }
 
 function populateDatabaseTypes() {
@@ -188,16 +228,38 @@ function selectDbType(dbType, iconSrc, label) {
 
   closeDbTypeDropdown();
 
+  // Populate dialect dropdown for this database type
+  populateDialects(dbType);
+
+  // Toggle dialect input vs select for "other" type
+  const dialectSelect = document.getElementById("dialect");
+  const dialectInput = document.getElementById("dialectInput");
+  if (dbType === "other") {
+    dialectSelect.setAttribute("hidden", "");
+    dialectInput.removeAttribute("hidden");
+  } else {
+    dialectInput.setAttribute("hidden", "");
+    dialectInput.value = "";
+    dialectSelect.removeAttribute("hidden");
+  }
+
   // Apply driver defaults
-  if (dbType && driverConfig.databases && driverConfig.databases[dbType]) {
+  if (dbType === "other") {
+    // For "other" type, keep the existing driver value so the user can enter their own
+  } else if (dbType && driverConfig.databases && driverConfig.databases[dbType]) {
     const dbConfig = driverConfig.databases[dbType];
     document.getElementById("driver").value = dbConfig.driver;
-    if (typeof dbConfig.default_port === "number") {
+    if (typeof dbConfig.default_port === "number" && dbConfig.default_port > 0) {
       document.getElementById("port").value = String(dbConfig.default_port);
     }
   } else {
     document.getElementById("driver").value = "";
   }
+
+  // Make connection string editable
+  const connStringEl = document.getElementById("connectionString");
+  connStringEl.removeAttribute("readonly");
+  connStringEl.classList.add("editable");
 
   updateDriverStatus(document.getElementById("driver").value);
   updateConnectionString();
@@ -237,7 +299,7 @@ if (dbTypeWidget) {
 
   populateDatabaseTypes();
 
-  const initialDatabaseType = findDatabaseTypeByDriver(initial.connection.driver);
+  const initialDatabaseType = initial.connection.databaseType || findDatabaseTypeByDriver(initial.connection.driver);
   if (initialDatabaseType && driverConfig.databases?.[initialDatabaseType]) {
     const dbConfig = driverConfig.databases[initialDatabaseType];
     selectDbType(
@@ -245,6 +307,25 @@ if (dbTypeWidget) {
       dbConfig.icon || null,
       initialDatabaseType.charAt(0).toUpperCase() + initialDatabaseType.slice(1),
     );
+
+    // Restore saved dialect selection
+    if (initial.connection.dialect) {
+      if (initialDatabaseType === "other") {
+        document.getElementById("dialectInput").value = initial.connection.dialect;
+      } else {
+        document.getElementById("dialect").value = initial.connection.dialect;
+      }
+      updateConnectionString();
+    }
+
+    // Restore the saved connection string if it was manually edited
+    if (initial.connection.connectionString) {
+      const connStringEl = document.getElementById("connectionString");
+      if (connStringEl.value !== initial.connection.connectionString) {
+        connStringEl.value = initial.connection.connectionString;
+        connStringEl.dataset.manuallyEdited = "true";
+      }
+    }
   }
 }
 
@@ -259,7 +340,6 @@ function createParamRow(key = "", value = "") {
   const keyCell = document.createElement("td");
   const keyInput = document.createElement("input");
   keyInput.className = "param-input";
-  keyInput.placeholder = "e.g. authSource";
   keyInput.value = key;
   keyInput.addEventListener("input", updateConnectionString);
   keyCell.appendChild(keyInput);
@@ -267,7 +347,6 @@ function createParamRow(key = "", value = "") {
   const valueCell = document.createElement("td");
   const valueInput = document.createElement("input");
   valueInput.className = "param-input";
-  valueInput.placeholder = "e.g. admin";
   valueInput.value = value;
   valueInput.addEventListener("input", updateConnectionString);
   valueCell.appendChild(valueInput);
@@ -364,6 +443,7 @@ function updateConnectionString() {
   const additionalParameters = collectAdditionalParameters();
   const selectedDb = document.getElementById("databaseType")?.value;
   const currentDriver = document.getElementById("driver").value;
+  const selectedDialect = getSelectedDialect();
 
   const maskedPass = password ? "*".repeat(password.length) : "";
   let credentials = "";
@@ -383,6 +463,7 @@ function updateConnectionString() {
   ) {
     const template = driverConfig.databases[resolvedDbType].uri_template;
     connectionString = buildConnectionStringFromTemplate(template, {
+      dialect: selectedDialect,
       credentials,
       host,
       port,
@@ -401,7 +482,11 @@ function updateConnectionString() {
       : "?" + query;
   }
 
-  document.getElementById("connectionString").value = connectionString;
+  const connStringEl = document.getElementById("connectionString");
+  if (connStringEl.dataset.manuallyEdited === "true") {
+    return;
+  }
+  connStringEl.value = connectionString;
   document.getElementById("copyStatus").textContent = "";
   document.getElementById("copyStatus").classList.remove("error");
 }
@@ -442,6 +527,11 @@ async function copyConnectionString() {
 loadInitialParams();
 updateConnectionString();
 
+// When user directly edits connection string, mark it to preserve the value
+document.getElementById("connectionString").addEventListener("input", function () {
+  this.dataset.manuallyEdited = "true";
+});
+
 document.getElementById("addParam").addEventListener("click", () => {
   createParamRow("", "");
   updateConnectionString();
@@ -453,9 +543,17 @@ document
     copyConnectionString();
   });
 
+function clearManualEdit() {
+  document.getElementById("connectionString").dataset.manuallyEdited = "";
+  updateConnectionString();
+}
+
 ["host", "port", "database", "username", "password", "driver"].forEach((id) => {
-  document.getElementById(id).addEventListener("input", updateConnectionString);
+  document.getElementById(id).addEventListener("input", clearManualEdit);
 });
+
+document.getElementById("dialect").addEventListener("change", clearManualEdit);
+document.getElementById("dialectInput").addEventListener("input", clearManualEdit);
 
 const saveBtn = document.getElementById("save");
 saveBtn.dataset.originalLabel = saveBtn.textContent;
@@ -471,29 +569,36 @@ saveBtn.addEventListener("click", () => {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
   const driver = document.getElementById("driver").value;
+  const selectedDialect = getSelectedDialect();
   const additionalParameters = collectAdditionalParameters();
 
   // Build real connection string with actual password for backend
-  const selectedDb = document.getElementById("databaseType")?.value;
-  const resolvedDbType = selectedDb || findDatabaseTypeByDriver(driver);
+  const connStringEl = document.getElementById("connectionString");
   let realConnectionString = "";
-  if (resolvedDbType && driverConfig.databases && driverConfig.databases[resolvedDbType]) {
-    const template = driverConfig.databases[resolvedDbType].uri_template;
-    let creds = "";
-    if (username) {
-      creds = username + (password ? ":" + password : "") + "@";
-    }
-    realConnectionString = buildConnectionStringFromTemplate(template, {
-      credentials: creds,
-      host: document.getElementById("host").value.trim() || "localhost",
-      port: rawPort,
-      database: document.getElementById("database").value.trim(),
-    });
-    const query = Object.entries(additionalParameters)
-      .map(([key, value]) => key + "=" + String(value))
-      .join("&");
-    if (realConnectionString && query) {
-      realConnectionString += realConnectionString.includes("?") ? "&" + query : "?" + query;
+  if (connStringEl.dataset.manuallyEdited === "true") {
+    // User manually edited the connection string — use it as-is
+    realConnectionString = connStringEl.value;
+  } else {
+    const resolvedDbType = selectedDbType || findDatabaseTypeByDriver(driver);
+    if (resolvedDbType && driverConfig.databases && driverConfig.databases[resolvedDbType]) {
+      const template = driverConfig.databases[resolvedDbType].uri_template;
+      let creds = "";
+      if (username) {
+        creds = username + (password ? ":" + password : "") + "@";
+      }
+      realConnectionString = buildConnectionStringFromTemplate(template, {
+        dialect: selectedDialect,
+        credentials: creds,
+        host: document.getElementById("host").value.trim() || "localhost",
+        port: rawPort,
+        database: document.getElementById("database").value.trim(),
+      });
+      const query = Object.entries(additionalParameters)
+        .map(([key, value]) => key + "=" + String(value))
+        .join("&");
+      if (realConnectionString && query) {
+        realConnectionString += realConnectionString.includes("?") ? "&" + query : "?" + query;
+      }
     }
   }
 
@@ -505,7 +610,9 @@ saveBtn.addEventListener("click", () => {
     username,
     password,
     driver,
+    dialect: selectedDialect || undefined,
     connectionString: realConnectionString,
+    databaseType: selectedDbType || undefined,
     additionalParameters,
   };
 

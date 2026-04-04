@@ -11,7 +11,51 @@
     <div class="container">
       <section class="query-pane">
         <div class="query-toolbar">
+          <div class="toolbar-left">
           <div class="section-title">SQL Editor</div>
+          <div class="editor-file-actions">
+            <button id="openFileBtn" class="btn btn-small btn-icon" title="Open File...">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M1.5 1h4l1.5 2H14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2.5A1.5 1.5 0 0 1 1.5 1zM2 5v8h12V5H2z" />
+                </svg>
+              </span>
+              <span>Open...</span>
+            </button>
+            <div class="recent-files-wrap">
+              <button id="recentFilesBtn" class="btn-dropdown-arrow" title="Recent Files">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M4 6l4 4 4-4H4z" />
+                </svg>
+              </button>
+              <div id="recentFilesMenu" class="recent-files-menu hidden"></div>
+            </div>
+            <button id="saveFileBtn" class="btn btn-small btn-icon" title="Save File...">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M13.353 1.146l1.5 1.5A.5.5 0 0 1 15 3v11.5a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-13A.5.5 0 0 1 1.5 1H12a.5.5 0 0 1 .353.146zM2 2v12h12V3.207L12.793 2H11v4H4V2H2zm3 0v3h5V2H5zm1 8h4v4H6v-4z" />
+                </svg>
+              </span>
+              <span>Save...</span>
+            </button>
+            <button id="saveAsFileBtn" class="btn btn-small btn-icon" title="Save As...">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M13.353 1.146l1.5 1.5A.5.5 0 0 1 15 3v11.5a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-13A.5.5 0 0 1 1.5 1H12a.5.5 0 0 1 .353.146zM2 2v12h12V3.207L12.793 2H11v4H4V2H2zm3 0v3h5V2H5zm1 8h4v4H6v-4z" />
+                </svg>
+              </span>
+              <span>Save As...</span>
+            </button>
+            <button id="formatBtn" class="btn btn-small btn-icon" title="Format SQL">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false">
+                  <path d="M2 3h12v1H2V3zm0 4h8v1H2V7zm0 4h10v1H2v-1z" />
+                </svg>
+              </span>
+              <span>Format</span>
+            </button>
+          </div>
+          </div>
           <div class="query-actions">
             <label class="limit-label" for="limitSelect">Limit</label>
             <select id="limitSelect" class="limit-select" title="Row limit">

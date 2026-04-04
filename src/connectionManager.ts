@@ -177,7 +177,9 @@ export async function openConnectionEditor(
       username: string;
       password: string;
       driver?: string;
+      dialect?: string;
       connectionString?: string;
+      databaseType?: string;
       additionalParameters?: Record<string, string>;
     };
 
@@ -271,7 +273,9 @@ export async function openConnectionEditor(
       username: payload.username?.trim() ?? "",
       password: payload.password ?? "",
       driver: driverValue,
+      dialect: payload.dialect?.trim() || undefined,
       connectionString: payload.connectionString?.trim() || undefined,
+      databaseType: payload.databaseType?.trim() || undefined,
       additionalParameters: payload.additionalParameters ?? {},
     });
 

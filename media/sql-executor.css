@@ -134,6 +134,124 @@ body.is-resizing {
   gap: 8px;
 }
 
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--vscode-toolbar-activeBackground, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.editor-file-actions .btn {
+  color: var(--vscode-button-secondaryForeground, var(--text-primary));
+}
+
+.editor-file-actions .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.editor-file-actions .icon svg {
+  fill: currentColor;
+}
+
+/* Recent files dropdown */
+.recent-files-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.btn-dropdown-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.btn-dropdown-arrow svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.btn-dropdown-arrow:hover {
+  color: var(--text-primary);
+  background: var(--button-hover-bg);
+}
+
+.recent-files-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  padding: 4px 0;
+}
+
+.recent-files-menu.hidden {
+  display: none;
+}
+
+.recent-file-item {
+  display: block;
+  width: 100%;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-file-item:hover {
+  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+}
+
+.recent-file-item.is-linked {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.recent-file-item.is-linked::before {
+  content: "●";
+  margin-right: 6px;
+  font-size: 8px;
+  vertical-align: middle;
+}
+
+.recent-files-empty {
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: italic;
+}
+
 .query-actions {
   display: flex;
   align-items: center;

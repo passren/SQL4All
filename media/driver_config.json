@@ -4,139 +4,169 @@
       "icon": "icons/athena.svg",
       "driver": "pyathena",
       "default_port": 443,
-      "uri_template": "awsathena+rest://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["awsathena+rest"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "bigquery": {
       "icon": "icons/bigquery.svg",
       "driver": "sqlalchemy-bigquery",
       "default_port": 443,
-      "uri_template": "bigquery://[project][/dataset]"
+      "dialects": ["bigquery"],
+      "uri_template": "dialect://host[/database][?additionalParameters]"
     },
     "clickhouse": {
       "icon": "icons/clickhouse.svg",
       "driver": "clickhouse-sqlalchemy",
       "default_port": 9000,
-      "uri_template": "clickhouse+native://[username[:password]@]host[:port]/[database]"
+      "dialects": ["clickhouse+native", "clickhouse+http", "clickhouse+asynch"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "cockroachdb": {
       "icon": "icons/cockroachdb.svg",
       "driver": "sqlalchemy-cockroachdb",
       "default_port": 26257,
-      "uri_template": "cockroachdb://[username[:password]@]host[:port]/[database][?sslmode=require]"
+      "dialects": ["cockroachdb", "cockroachdb+psycopg2"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "cratedb": {
       "icon": "icons/cratedb.svg",
       "driver": "sqlalchemy-cratedb",
       "default_port": 4200,
-      "uri_template": "crate://[username[:password]@]host[:port]"
+      "dialects": ["crate"],
+      "uri_template": "dialect://[username[:password]@]host[:port][?additionalParameters]"
     },
     "databricks": {
       "icon": "icons/databricks.svg",
       "driver": "databricks-sqlalchemy",
       "default_port": 443,
-      "uri_template": "databricks://token:[token]@[host][:port]/[database]"
+      "dialects": ["databricks"],
+      "uri_template": "dialect://token:[token]@[host][:port]/[database][?additionalParameters]"
     },
     "db2": {
       "icon": "icons/db2.svg",
       "driver": "ibm-db-sa",
       "default_port": 50000,
-      "uri_template": "db2+ibm_db://[username[:password]@]host[:port]/[database]"
+      "dialects": ["db2+ibm_db", "db2+ibm_db_sa"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "duckdb": {
       "icon": "icons/duckdb.svg",
       "driver": "duckdb-engine",
       "default_port": 0,
-      "uri_template": "duckdb:///[path/to/database.db]"
+      "dialects": ["duckdb"],
+      "uri_template": "dialect:///host[?additionalParameters]"
     },
     "dynamodb": {
       "icon": "icons/dynamodb.svg",
       "driver": "pydynamodb",
       "default_port": 443,
-      "uri_template": "dynamodb://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["dynamodb"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "elasticsearch": {
       "icon": "icons/elasticsearch.svg",
       "driver": "elasticsearch-dbapi",
       "default_port": 9200,
-      "uri_template": "elasticsearch+http://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["elasticsearch+http", "elasticsearch+https"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "firebird": {
       "icon": "icons/firebird.svg",
       "driver": "sqlalchemy-firebird",
       "default_port": 3050,
-      "uri_template": "firebird+fdb://[username[:password]@]host[:port]/[database]"
+      "dialects": ["firebird+fdb", "firebird"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "hana": {
       "icon": "icons/hana.svg",
       "driver": "sqlalchemy-hana",
       "default_port": 39015,
-      "uri_template": "hana+hdbcli://[username[:password]@]host[:port]"
+      "dialects": ["hana+hdbcli", "hana"],
+      "uri_template": "dialect://[username[:password]@]host[:port][?additionalParameters]"
     },
     "hive": {
       "icon": "icons/hive.svg",
       "driver": "pyhive",
       "default_port": 10000,
-      "uri_template": "hive://[username[:password]@]host[:port]/[database]"
+      "dialects": ["hive", "hive+http", "hive+https"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mariadb": {
       "icon": "icons/mariadb.svg",
       "driver": "mariadb",
       "default_port": 3306,
-      "uri_template": "mariadb+mariadbconnector://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["mariadb+mariadbconnector", "mariadb+pymysql"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mongodb": {
       "icon": "icons/mongodb.svg",
       "driver": "pymongosql",
       "default_port": 27017,
-      "uri_template": "mongodb://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["mongodb", "mongodb+srv"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mysql": {
       "icon": "icons/mysql.svg",
       "driver": "mysql-connector-python",
       "default_port": 3306,
-      "uri_template": "mysql+mysqlconnector://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["mysql+mysqlconnector", "mysql+pymysql", "mysql+mysqldb"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "oracle": {
       "icon": "icons/oracle.svg",
       "driver": "oracledb",
       "default_port": 1521,
-      "uri_template": "oracle+oracledb://[username[:password]@]host[:port]/[service_name][?additionalParameters]"
+      "dialects": ["oracle+oracledb", "oracle+cx_oracle", "oracle"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "postgresql": {
       "icon": "icons/postgresql.svg",
       "driver": "psycopg2-binary",
       "default_port": 5432,
-      "uri_template": "postgresql+psycopg2://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["postgresql+psycopg2", "postgresql+pg8000", "postgresql+asyncpg", "postgresql"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "redshift": {
       "icon": "icons/redshift.svg",
       "driver": "sqlalchemy-redshift",
       "default_port": 5439,
-      "uri_template": "redshift+redshift_connector://[username[:password]@]host[:port]/[database]"
+      "dialects": ["redshift+redshift_connector", "redshift+psycopg2"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "snowflake": {
       "icon": "icons/snowflake.svg",
       "driver": "snowflake-sqlalchemy",
       "default_port": 443,
-      "uri_template": "snowflake://[username[:password]@]account[/database[/schema]][?warehouse=wh]"
+      "dialects": ["snowflake"],
+      "uri_template": "dialect://[username[:password]@]host[/database][?additionalParameters]"
     },
     "sqlite": {
       "icon": "icons/sqlite.svg",
       "driver": "",
       "default_port": 0,
-      "uri_template": "sqlite:///[path/to/database.db]"
+      "dialects": ["sqlite", "sqlite+pysqlite"],
+      "uri_template": "dialect:///host[?additionalParameters]"
     },
     "sqlserver": {
       "icon": "icons/sqlserver.svg",
       "driver": "pyodbc",
       "default_port": 1433,
-      "uri_template": "mssql+pyodbc://[username[:password]@]host[:port]/[database][?additionalParameters]"
+      "dialects": ["mssql+pyodbc", "mssql+pymssql", "mssql"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "teradata": {
       "icon": "icons/teradata.svg",
       "driver": "teradatasqlalchemy",
       "default_port": 1025,
-      "uri_template": "teradatasql://[username[:password]@]host[:port]/[database]"
+      "dialects": ["teradatasql"],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
+    },
+    "other": {
+      "icon": "icons/other.svg",
+      "driver": "",
+      "default_port": 0,
+      "dialects": [],
+      "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     }
   }
 }

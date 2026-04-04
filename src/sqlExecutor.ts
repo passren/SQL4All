@@ -7,6 +7,7 @@ import {
   BRAND_NAME,
   QUERY_DRAFTS_STORE_KEY,
   QUERY_LAYOUTS_STORE_KEY,
+  RECENT_FILES_STORE_KEY,
 } from "./types";
 
 export interface SqlExecutorServices {
@@ -22,6 +23,7 @@ export interface SqlExecutorServices {
 
 let services: SqlExecutorServices;
 const runningProcesses = new Map<string, ChildProcess>();
+const linkedFiles = new Map<string, string>();
 
 export function initSqlExecutor(s: SqlExecutorServices): void {
   services = s;
@@ -140,6 +142,35 @@ function getQueryLayouts(context: vscode.ExtensionContext): Record<string, numbe
   return (current as Record<string, number> | undefined) ?? {};
 }
 
+function getRecentFiles(context: vscode.ExtensionContext, connectionName: string): string[] {
+  const raw = context.globalState.get(RECENT_FILES_STORE_KEY);
+  if (Array.isArray(raw) || !raw || typeof raw !== "object") {
+    return [];
+  }
+  const all = raw as Record<string, string[]>;
+  const files = all[connectionName];
+  return Array.isArray(files) ? files : [];
+}
+
+async function addRecentFile(
+  context: vscode.ExtensionContext,
+  connectionName: string,
+  filePath: string,
+): Promise<void> {
+  const raw = context.globalState.get(RECENT_FILES_STORE_KEY);
+  const all: Record<string, string[]> = (raw && typeof raw === "object" && !Array.isArray(raw))
+    ? raw as Record<string, string[]>
+    : {};
+  let files = Array.isArray(all[connectionName]) ? all[connectionName] : [];
+  files = files.filter((f) => f !== filePath);
+  files.unshift(filePath);
+  if (files.length > 10) {
+    files = files.slice(0, 10);
+  }
+  all[connectionName] = files;
+  await context.globalState.update(RECENT_FILES_STORE_KEY, all);
+}
+
 async function saveQueryDraft(
   context: vscode.ExtensionContext,
   connectionName: string,
@@ -188,6 +219,7 @@ async function handleWebviewMessage(
     case "ready":
       const drafts = getQueryDrafts(context);
       const layouts = getQueryLayouts(context);
+      const recentFiles = getRecentFiles(context, connectionName);
       panel.webview.postMessage({
         command: "initConnection",
         data: {
@@ -197,6 +229,7 @@ async function handleWebviewMessage(
           database: connection.database,
           lastQuery: drafts[connectionName] || "",
           queryPaneHeight: layouts[connectionName],
+          recentFiles,
         },
       });
       break;
@@ -208,11 +241,6 @@ async function handleWebviewMessage(
       );
       break;
     case "executeQuery":
-      await saveQueryDraft(
-        context,
-        connectionName,
-        typeof message.query === "string" ? message.query : "",
-      );
       await executeQuery(
         message.query,
         message.paramsRaw,
@@ -239,6 +267,21 @@ async function handleWebviewMessage(
       break;
     case "exportResults":
       exportResults(message.data, message.format);
+      break;
+    case "openFile":
+      await handleOpenFile(connectionName, panel, context);
+      break;
+    case "openRecentFile":
+      await handleOpenRecentFile(connectionName, message.filePath, panel, context);
+      break;
+    case "saveFile":
+      await handleSaveFile(connectionName, message.content, panel, context);
+      break;
+    case "saveFileAs":
+      await handleSaveFileAs(connectionName, message.content, panel, context);
+      break;
+    case "formatSql":
+      handleFormatSql(message.sql, panel);
       break;
   }
 }
@@ -409,4 +452,149 @@ function convertToCSV(data: any[]): string {
   });
 
   return [csvHeaders, ...csvRows].join("\n");
+}
+
+async function handleOpenFile(
+  connectionName: string,
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: { "SQL Files": ["sql"], "Text Files": ["txt"], "All Files": ["*"] },
+    title: "Open SQL File",
+  });
+
+  if (!uris || uris.length === 0) {
+    return;
+  }
+
+  const filePath = uris[0].fsPath;
+  const content = fs.readFileSync(filePath, "utf-8");
+  linkedFiles.set(connectionName, filePath);
+  await addRecentFile(context, connectionName, filePath);
+  panel.webview.postMessage({ command: "fileOpened", content, filePath });
+}
+
+async function handleOpenRecentFile(
+  connectionName: string,
+  filePath: string,
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  if (!fs.existsSync(filePath)) {
+    vscode.window.showWarningMessage(`File not found: ${filePath}`);
+    return;
+  }
+  const content = fs.readFileSync(filePath, "utf-8");
+  linkedFiles.set(connectionName, filePath);
+  await addRecentFile(context, connectionName, filePath);
+  panel.webview.postMessage({ command: "fileOpened", content, filePath });
+}
+
+async function handleSaveFile(
+  connectionName: string,
+  content: string,
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const linked = linkedFiles.get(connectionName);
+
+  if (linked) {
+    fs.writeFileSync(linked, content, "utf-8");
+    await addRecentFile(context, connectionName, linked);
+    panel.webview.postMessage({ command: "fileLinked", filePath: linked });
+    vscode.window.showInformationMessage(`Saved to ${linked}`);
+  } else {
+    const uri = await vscode.window.showSaveDialog({
+      filters: { "SQL Files": ["sql"], "Text Files": ["txt"], "All Files": ["*"] },
+      title: "Save SQL File",
+    });
+
+    if (!uri) {
+      return;
+    }
+
+    const filePath = uri.fsPath;
+    fs.writeFileSync(filePath, content, "utf-8");
+    linkedFiles.set(connectionName, filePath);
+    await addRecentFile(context, connectionName, filePath);
+    panel.webview.postMessage({ command: "fileLinked", filePath });
+    vscode.window.showInformationMessage(`Saved to ${filePath}`);
+  }
+}
+
+async function handleSaveFileAs(
+  connectionName: string,
+  content: string,
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const uri = await vscode.window.showSaveDialog({
+    filters: { "SQL Files": ["sql"], "Text Files": ["txt"], "All Files": ["*"] },
+    title: "Save SQL File As",
+  });
+
+  if (!uri) {
+    return;
+  }
+
+  const filePath = uri.fsPath;
+  fs.writeFileSync(filePath, content, "utf-8");
+  linkedFiles.set(connectionName, filePath);
+  await addRecentFile(context, connectionName, filePath);
+  panel.webview.postMessage({ command: "fileLinked", filePath });
+  vscode.window.showInformationMessage(`Saved to ${filePath}`);
+}
+
+function handleFormatSql(
+  sql: string,
+  panel: vscode.WebviewPanel,
+): void {
+  const formatted = formatSqlBasic(sql);
+  panel.webview.postMessage({
+    command: "formatSqlResult",
+    formatted,
+  });
+}
+
+function formatSqlBasic(sql: string): string {
+  const keywords = [
+    "SELECT", "FROM", "WHERE", "AND", "OR", "ORDER BY", "GROUP BY",
+    "HAVING", "LIMIT", "OFFSET", "INSERT INTO", "VALUES", "UPDATE",
+    "SET", "DELETE FROM", "CREATE TABLE", "ALTER TABLE", "DROP TABLE",
+    "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN",
+    "CROSS JOIN", "ON", "UNION", "UNION ALL", "EXCEPT", "INTERSECT",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "AS", "IN", "NOT IN",
+    "EXISTS", "NOT EXISTS", "BETWEEN", "LIKE", "IS NULL", "IS NOT NULL",
+  ];
+
+  let result = sql.trim();
+  // Normalize whitespace
+  result = result.replace(/\s+/g, " ");
+
+  // Add newlines before major keywords
+  const majorKeywords = [
+    "SELECT", "FROM", "WHERE", "ORDER BY", "GROUP BY", "HAVING",
+    "LIMIT", "OFFSET", "INSERT INTO", "VALUES", "UPDATE", "SET",
+    "DELETE FROM", "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN",
+    "FULL JOIN", "CROSS JOIN", "ON", "UNION", "UNION ALL", "EXCEPT",
+    "INTERSECT",
+  ];
+
+  for (const kw of majorKeywords) {
+    const regex = new RegExp(`\\b(${kw})\\b`, "gi");
+    result = result.replace(regex, "\n$1");
+  }
+
+  // Indent sub-keywords
+  const indentKeywords = ["AND", "OR"];
+  for (const kw of indentKeywords) {
+    const regex = new RegExp(`\\n?(\\b${kw}\\b)`, "gi");
+    result = result.replace(regex, "\n  $1");
+  }
+
+  return result.trim();
 }

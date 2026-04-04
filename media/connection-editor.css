@@ -201,6 +201,11 @@ textarea[readonly] {
   opacity: 0.95;
 }
 
+textarea.editable {
+  border-color: var(--vscode-focusBorder);
+  cursor: text;
+}
+
 .section-title {
   margin-top: 4px;
   font-size: 12px;
@@ -223,8 +228,8 @@ textarea[readonly] {
   margin-top: 4px;
   border: 1px solid var(--vscode-panel-border, var(--vscode-input-border));
   border-radius: 4px;
-  overflow: hidden;
-  max-height: 132px;
+  overflow-y: auto;
+  max-height: 250px;
 }
 
 table {
@@ -254,7 +259,7 @@ th:last-child {
 }
 
 .param-input {
-  width: 100%;
+  width: 95%;
   padding: 4px 6px;
   font-size: 12px;
   line-height: 1.2;
@@ -333,6 +338,7 @@ button {
 }
 
 .driver-input-wrap {
+  width: 60%;
   display: flex;
   align-items: center;
   gap: 4px;

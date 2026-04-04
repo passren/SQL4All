@@ -5,7 +5,9 @@ export interface DbConnection {
   username: string;
   password: string;
   driver?: string;
+  dialect?: string;
   connectionString?: string;
+  databaseType?: string;
   additionalParameters?: Record<string, string>;
 }
 
@@ -53,7 +55,9 @@ export function normalizeConnection(raw: unknown): DbConnection {
     username: String(source.username ?? ""),
     password: String(source.password ?? ""),
     driver: String(source.driver ?? source.dbDriver ?? "").trim(),
+    dialect: String(source.dialect ?? "").trim() || undefined,
     connectionString: String(source.connectionString ?? "").trim() || undefined,
+    databaseType: String(source.databaseType ?? "").trim() || undefined,
     additionalParameters: normalizeAdditionalParameters(rawAdditionalParameters),
   };
 }
@@ -108,5 +112,6 @@ export const QUERY_LAYOUTS_STORE_KEY = `${EXTENSION_NAMESPACE}.queryLayouts`;
 export const PYTHON_SETTING_KEY = "pythonPath";
 export const READY_MARKER_FILE = ".sql4all-ready";
 export const INSTALLED_DRIVERS_STORE_KEY = `${EXTENSION_NAMESPACE}.installedDrivers`;
+export const RECENT_FILES_STORE_KEY = `${EXTENSION_NAMESPACE}.recentFiles`;
 export const NEW_CONNECTION = "__NEW_CONNECTION__";
 export const TABLE_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.tableItem`;

@@ -67,10 +67,17 @@
           <label>Password (optional)</label
           ><input id="password" type="password" />
         </div>
+        <div class="field field-dialect">
+          <label>Dialect</label>
+          <select id="dialect">
+            <option value="">-- Select Dialect --</option>
+          </select>
+          <input id="dialectInput" hidden />
+        </div>
         <div class="field field-driver">
           <label>Driver <span id="driverStatus" class="driver-status" hidden></span></label>
           <div class="driver-input-wrap">
-            <input id="driver" placeholder="e.g. pymongosql" />
+            <input id="driver" />
             <button
               id="reloadDriver"
               class="icon-btn reload-driver-btn"
