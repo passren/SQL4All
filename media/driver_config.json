@@ -101,8 +101,8 @@
     "mongodb": {
       "icon": "icons/mongodb.svg",
       "driver": "pymongosql",
-      "default_port": 27017,
       "dialects": ["mongodb", "mongodb+srv"],
+      "extras": ["pymongo[aws]"],
       "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "mysql": {

@@ -66,6 +66,12 @@
         "title": "Copy Table Name",
         "category": "SQL4ALL",
         "icon": "$(copy)"
+      },
+      {
+        "command": "sql4all.connectDatabase",
+        "title": "Connect...",
+        "category": "SQL4ALL",
+        "icon": "$(plug)"
       }
     ],
     "viewsContainers": {
@@ -105,6 +111,11 @@
           "command": "sql4all.connectConnection",
           "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
           "group": "inline@1"
+        },
+        {
+          "command": "sql4all.connectDatabase",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
+          "group": "1_connect@1"
         },
         {
           "command": "sql4all.editConnection",

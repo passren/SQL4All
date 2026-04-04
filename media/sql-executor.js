@@ -636,16 +636,22 @@ function setupEventListeners() {
   // Recent files dropdown
   const recentFilesBtn = document.getElementById("recentFilesBtn");
   const recentFilesMenu = document.getElementById("recentFilesMenu");
-  recentFilesBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
+  const recentFilesWrap = recentFilesBtn.closest(".recent-files-wrap");
+  let recentHideTimer = null;
+  recentFilesWrap.addEventListener("mouseenter", () => {
+    if (recentHideTimer) { clearTimeout(recentHideTimer); recentHideTimer = null; }
     renderRecentFilesMenu();
-    recentFilesMenu.classList.toggle("hidden");
+    recentFilesMenu.classList.remove("hidden");
   });
-  document.addEventListener("click", () => {
-    recentFilesMenu.classList.add("hidden");
+  recentFilesWrap.addEventListener("mouseleave", () => {
+    recentHideTimer = setTimeout(() => {
+      recentFilesMenu.classList.add("hidden");
+    }, 200);
   });
-  recentFilesMenu.addEventListener("click", (e) => {
-    e.stopPropagation();
+  document.addEventListener("click", (e) => {
+    if (!recentFilesWrap.contains(e.target)) {
+      recentFilesMenu.classList.add("hidden");
+    }
   });
 
   // Message handler from extension

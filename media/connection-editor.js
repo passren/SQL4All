@@ -473,7 +473,7 @@ function updateConnectionString() {
 
   // Append additional parameters
   const query = Object.entries(additionalParameters)
-    .map(([key, value]) => key + "=" + String(value))
+    .map(([key, value]) => encodeURIComponent(key) + "=" + encodeURIComponent(String(value)))
     .join("&");
 
   if (connectionString && query) {
@@ -584,7 +584,9 @@ saveBtn.addEventListener("click", () => {
       const template = driverConfig.databases[resolvedDbType].uri_template;
       let creds = "";
       if (username) {
-        creds = username + (password ? ":" + password : "") + "@";
+        const encodedUser = encodeURIComponent(username);
+        const encodedPass = password ? encodeURIComponent(password) : "";
+        creds = encodedUser + (password ? ":" + encodedPass : "") + "@";
       }
       realConnectionString = buildConnectionStringFromTemplate(template, {
         dialect: selectedDialect,
@@ -594,7 +596,7 @@ saveBtn.addEventListener("click", () => {
         database: document.getElementById("database").value.trim(),
       });
       const query = Object.entries(additionalParameters)
-        .map(([key, value]) => key + "=" + String(value))
+        .map(([key, value]) => encodeURIComponent(key) + "=" + encodeURIComponent(String(value)))
         .join("&");
       if (realConnectionString && query) {
         realConnectionString += realConnectionString.includes("?") ? "&" + query : "?" + query;

@@ -20,6 +20,7 @@ export interface ConnectionManagerServices {
     context: vscode.ExtensionContext,
     driverName: string,
     progressCallback?: (message: string) => void,
+    extras?: string[],
   ): Promise<void>;
   runProcess(command: string, args: string[]): Promise<string>;
   fetchDriverVersion(
@@ -229,6 +230,20 @@ export async function openConnectionEditor(
     // Ensure Python venv + driver are installed before saving
     if (driverValue) {
       try {
+        // Resolve extras from driver config
+        const dbType = payload.databaseType?.trim() || "";
+        let driverExtras: string[] | undefined;
+        if (dbType) {
+          try {
+            const driverConfigPath = path.join(context.extensionPath, "media", "driver_config.json");
+            const raw = fs.readFileSync(driverConfigPath, "utf8");
+            const parsed = JSON.parse(raw);
+            if (parsed?.databases?.[dbType] && Array.isArray(parsed.databases[dbType].extras)) {
+              driverExtras = parsed.databases[dbType].extras;
+            }
+          } catch { /* ignore */ }
+        }
+
         await services.ensureDriverInstalled(
           context,
           driverValue,
@@ -241,6 +256,7 @@ export async function openConnectionEditor(
               });
             }
           },
+          driverExtras,
         );
 
         if (connectionEditorPanel) {

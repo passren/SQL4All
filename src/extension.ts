@@ -429,6 +429,18 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
+  const connectDatabaseDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.connectDatabase`,
+    async (item?: ConnectionItem) => {
+      if (!item || !connectionTreeView) {
+        return;
+      }
+
+      connectionTreeProvider.refreshConnectionTables(item.connectionName);
+      await connectionTreeView.reveal(item, { expand: true, select: true, focus: true });
+    },
+  );
+
   const reloadDriverDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.reloadDriver`,
     async (item?: ConnectionItem) => {
@@ -439,6 +451,21 @@ export function activate(context: vscode.ExtensionContext) {
       if (!driverName) {
         return;
       }
+
+      // Resolve extras from driver_config.json
+      let extras: string[] = [];
+      try {
+        const driverConfigPath = path.join(context.extensionPath, "media", "driver_config.json");
+        const raw = fs.readFileSync(driverConfigPath, "utf8");
+        const parsed = JSON.parse(raw) as { databases?: Record<string, { driver?: string; extras?: string[] }> };
+        for (const dbConf of Object.values(parsed.databases ?? {})) {
+          if (String(dbConf.driver || "").trim().toLowerCase() === driverName.toLowerCase() && Array.isArray(dbConf.extras)) {
+            extras = dbConf.extras;
+            break;
+          }
+        }
+      } catch { /* ignore */ }
+
       try {
         await vscode.window.withProgress(
           {
@@ -455,6 +482,7 @@ export function activate(context: vscode.ExtensionContext) {
               "--upgrade",
               "--quiet",
               driverName,
+              ...extras,
             ]);
             const version = await fetchDriverVersion(context, driverName);
             await markDriverInstalled(context, driverName, version);
@@ -492,6 +520,7 @@ export function activate(context: vscode.ExtensionContext) {
     deleteConnectionDisposable,
     refreshConnectionsDisposable,
     copyTableNameDisposable,
+    connectDatabaseDisposable,
     reloadDriverDisposable,
     selectPythonExecutableDisposable,
     statusBar,
@@ -687,6 +716,7 @@ async function ensureDriverInstalled(
   context: vscode.ExtensionContext,
   driverName: string,
   progressCallback?: (message: string) => void,
+  extras?: string[],
 ): Promise<void> {
   const pipPackage = driverName.trim();
   if (!pipPackage) {
@@ -700,14 +730,19 @@ async function ensureDriverInstalled(
   progressCallback?.(`Setting up Python environment...`);
   const venvPython = await ensurePythonEnvironment(context);
 
+  const packages = [
+    "--quiet",
+    "sqlalchemy>=2.0,<3",
+    pipPackage,
+    ...(extras || []),
+  ];
+
   progressCallback?.(`Installing driver: ${pipPackage}...`);
   await runProcess(venvPython, [
     "-m",
     "pip",
     "install",
-    "--quiet",
-    "sqlalchemy>=2.0,<3",
-    pipPackage,
+    ...packages,
   ]);
 
   const version = await fetchDriverVersion(context, pipPackage);
