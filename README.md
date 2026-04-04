@@ -1,6 +1,6 @@
-# SQL4ALL
+# <img src="media/icons/sql4all-icon.svg" alt="" width="64" height="64"> SQL4ALL
 
-![Version](https://img.shields.io/badge/version-0.0.1-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![VS Code](https://img.shields.io/badge/VS%20Code-%3E%3D1.110.0-blue?logo=visual-studio-code)
 ![Downloads](https://img.shields.io/visual-studio-marketplace/d/sql4all.sql4all)

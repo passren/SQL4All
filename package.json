@@ -79,7 +79,7 @@
         {
           "id": "sql4all-explorer",
           "title": "SQL4ALL",
-          "icon": "$(database)"
+          "icon": "media/icons/sql4all-activitybar.svg"
         }
       ]
     },
