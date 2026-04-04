@@ -36,7 +36,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px;
+  padding: 5px;
   gap: 0;
 }
 
@@ -68,10 +68,10 @@ h1 {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background-color: var(--bg-secondary);
-  padding: 12px;
 }
 
 .query-pane {
+  padding: 4px;
   flex: 0 0 20%;
   min-height: 90px;
   display: flex;
@@ -85,6 +85,7 @@ h1 {
   display: flex;
   flex-direction: column;
   margin-top: 1px;
+  padding: 0;
 }
 
 .pane-divider {
@@ -161,6 +162,64 @@ body.is-resizing {
 
 .editor-file-actions .icon svg {
   fill: currentColor;
+}
+
+/* Find in editor */
+.find-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.find-input {
+  font-size: 12px;
+  padding: 4px 6px 4px 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--vscode-input-background, var(--bg-primary));
+  color: var(--vscode-input-foreground, var(--text-primary));
+  outline: none;
+  width: 120px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.find-input:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus-ring) 50%, transparent);
+}
+
+.find-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.find-btn {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.find-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.find-btn:hover {
+  color: var(--text-primary);
+  background: var(--button-hover-bg);
 }
 
 /* Recent files dropdown */
@@ -417,39 +476,52 @@ body.is-resizing {
 
 .results-header {
   display: flex;
-  align-items: center;
-  margin-bottom: 8px;
+  align-items: flex-end;
   gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--surface-muted);
+  border-radius: 6px 6px 0 0;
 }
 
 .section-title {
   flex: 0 0 auto;
+  padding: 8px 0;
 }
 
 .results-tabs {
   display: flex;
-  gap: 6px;
+  gap: 0;
 }
 
 .results-tab {
-  border: 1px solid var(--border-color);
-  background: var(--surface-muted);
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
   color: var(--text-secondary);
-  padding: 4px 10px;
-  border-radius: 999px;
+  padding: 6px 14px;
+  border-radius: 4px 4px 0 0;
   font-size: 12px;
   cursor: pointer;
+  position: relative;
+  top: 1px;
+}
+
+.results-tab + .results-tab {
+  margin-left: 0;
 }
 
 .results-tab:hover {
   color: var(--text-primary);
-  border-color: var(--focus-ring);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .results-tab.is-active {
-  color: var(--vscode-button-foreground, #ffffff);
+  color: #fff;
   background: var(--primary-color);
   border-color: var(--primary-color);
+  border-bottom: 1px solid var(--bg-secondary);
+  font-weight: 600;
 }
 
 .result-actions {
@@ -458,6 +530,30 @@ body.is-resizing {
   gap: 5px;
   align-items: center;
   margin-left: auto;
+  padding: 6px 0;
+}
+
+.export-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--vscode-toolbar-activeBackground, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.export-actions .btn {
+  color: var(--vscode-button-secondaryForeground, var(--text-primary));
+}
+
+.export-actions .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.export-actions .icon svg {
+  fill: currentColor;
 }
 
 .result-count {
@@ -469,7 +565,7 @@ body.is-resizing {
 }
 
 .results-status {
-  margin-top: 4px;
+  margin: 0 4px 4px 4px;
   padding: 4px 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -503,6 +599,7 @@ body.is-resizing {
   flex: 1;
   min-height: 0;
   display: flex;
+  padding: 4px 4px 0 4px;
 }
 
 .results-panel {

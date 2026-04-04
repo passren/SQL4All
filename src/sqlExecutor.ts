@@ -8,6 +8,7 @@ import {
   QUERY_DRAFTS_STORE_KEY,
   QUERY_LAYOUTS_STORE_KEY,
   RECENT_FILES_STORE_KEY,
+  LINKED_FILES_STORE_KEY,
 } from "./types";
 
 export interface SqlExecutorServices {
@@ -55,6 +56,9 @@ export function createOrShowPanel(
 
   services.panelsByConnection.set(connectionName, panel);
 
+  const baseTitle = `${BRAND_NAME} - ${connectionName}`;
+  let panelIsDirty = false;
+
   // Set tab icon based on database driver
   const iconUri = services.getDriverIcon(connection);
   if (iconUri) {
@@ -69,11 +73,14 @@ export function createOrShowPanel(
 
   panel.webview.onDidReceiveMessage(
     (message: any) =>
-      handleWebviewMessage(message, context, panel, connectionName, connection),
+      handleWebviewMessage(message, context, panel, connectionName, connection, (dirty: boolean) => {
+        panelIsDirty = dirty;
+        panel.title = dirty ? `● ${baseTitle}` : baseTitle;
+      }),
     undefined,
   );
 
-  panel.onDidDispose(() => {
+  panel.onDidDispose(async () => {
     services.panelsByConnection.delete(connectionName);
   }, undefined);
 
@@ -171,6 +178,32 @@ async function addRecentFile(
   await context.globalState.update(RECENT_FILES_STORE_KEY, all);
 }
 
+function getLinkedFile(context: vscode.ExtensionContext, connectionName: string): string | null {
+  const raw = context.globalState.get(LINKED_FILES_STORE_KEY);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const all = raw as Record<string, string>;
+  return typeof all[connectionName] === "string" ? all[connectionName] : null;
+}
+
+async function saveLinkedFile(
+  context: vscode.ExtensionContext,
+  connectionName: string,
+  filePath: string | null,
+): Promise<void> {
+  const raw = context.globalState.get(LINKED_FILES_STORE_KEY);
+  const all: Record<string, string> = (raw && typeof raw === "object" && !Array.isArray(raw))
+    ? raw as Record<string, string>
+    : {};
+  if (filePath) {
+    all[connectionName] = filePath;
+  } else {
+    delete all[connectionName];
+  }
+  await context.globalState.update(LINKED_FILES_STORE_KEY, all);
+}
+
 async function saveQueryDraft(
   context: vscode.ExtensionContext,
   connectionName: string,
@@ -206,6 +239,8 @@ export async function removeConnectionState(
     delete layouts[connectionName];
     await context.globalState.update(QUERY_LAYOUTS_STORE_KEY, layouts);
   }
+
+  await saveLinkedFile(context, connectionName, null);
 }
 
 async function handleWebviewMessage(
@@ -214,12 +249,20 @@ async function handleWebviewMessage(
   panel: vscode.WebviewPanel,
   connectionName: string,
   connection: DbConnection,
+  onDirtyChanged: (dirty: boolean) => void,
 ): Promise<void> {
   switch (message.command) {
+    case "contentDirty":
+      onDirtyChanged(!!message.dirty);
+      break;
     case "ready":
       const drafts = getQueryDrafts(context);
       const layouts = getQueryLayouts(context);
       const recentFiles = getRecentFiles(context, connectionName);
+      const savedLinkedFile = getLinkedFile(context, connectionName);
+      if (savedLinkedFile) {
+        linkedFiles.set(connectionName, savedLinkedFile);
+      }
       panel.webview.postMessage({
         command: "initConnection",
         data: {
@@ -230,6 +273,7 @@ async function handleWebviewMessage(
           lastQuery: drafts[connectionName] || "",
           queryPaneHeight: layouts[connectionName],
           recentFiles,
+          linkedFilePath: savedLinkedFile || null,
         },
       });
       break;
@@ -474,6 +518,7 @@ async function handleOpenFile(
   const filePath = uris[0].fsPath;
   const content = fs.readFileSync(filePath, "utf-8");
   linkedFiles.set(connectionName, filePath);
+  await saveLinkedFile(context, connectionName, filePath);
   await addRecentFile(context, connectionName, filePath);
   panel.webview.postMessage({ command: "fileOpened", content, filePath });
 }
@@ -490,6 +535,7 @@ async function handleOpenRecentFile(
   }
   const content = fs.readFileSync(filePath, "utf-8");
   linkedFiles.set(connectionName, filePath);
+  await saveLinkedFile(context, connectionName, filePath);
   await addRecentFile(context, connectionName, filePath);
   panel.webview.postMessage({ command: "fileOpened", content, filePath });
 }
@@ -520,6 +566,7 @@ async function handleSaveFile(
     const filePath = uri.fsPath;
     fs.writeFileSync(filePath, content, "utf-8");
     linkedFiles.set(connectionName, filePath);
+    await saveLinkedFile(context, connectionName, filePath);
     await addRecentFile(context, connectionName, filePath);
     panel.webview.postMessage({ command: "fileLinked", filePath });
     vscode.window.showInformationMessage(`Saved to ${filePath}`);
@@ -544,6 +591,7 @@ async function handleSaveFileAs(
   const filePath = uri.fsPath;
   fs.writeFileSync(filePath, content, "utf-8");
   linkedFiles.set(connectionName, filePath);
+  await saveLinkedFile(context, connectionName, filePath);
   await addRecentFile(context, connectionName, filePath);
   panel.webview.postMessage({ command: "fileLinked", filePath });
   vscode.window.showInformationMessage(`Saved to ${filePath}`);

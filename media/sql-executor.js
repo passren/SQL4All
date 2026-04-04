@@ -17,6 +17,8 @@ let queryExecutionTimer = null;
 let recentFiles = [];
 let linkedFilePath = null;
 const MAX_RECENT_FILES = 10;
+let savedContent = "";
+let isDirty = false;
 
 const MIN_QUERY_PANE_HEIGHT = 80;
 const MIN_RESULTS_PANE_HEIGHT = 140;
@@ -475,6 +477,22 @@ document.addEventListener("DOMContentLoaded", () => {
     extraKeys: {
       "Ctrl-Enter": executeQuery,
       "Cmd-Enter": executeQuery,
+      "Ctrl-S": function () {
+        document.getElementById("saveFileBtn").click();
+      },
+      "Cmd-S": function () {
+        document.getElementById("saveFileBtn").click();
+      },
+      "Ctrl-F": function () {
+        var fi = document.getElementById("findInput");
+        fi.focus();
+        fi.select();
+      },
+      "Cmd-F": function () {
+        var fi = document.getElementById("findInput");
+        fi.focus();
+        fi.select();
+      },
     },
   });
   sqlEditor.on("contextmenu", (cm, e) => e.preventDefault());
@@ -564,6 +582,57 @@ function setupEventListeners() {
     }
   });
 
+  // Find in editor
+  let lastFindQuery = "";
+  let lastFindPos = null;
+  const findInput = document.getElementById("findInput");
+  const findBtn = document.getElementById("findBtn");
+
+  function findInEditor() {
+    const query = findInput.value.toLowerCase();
+    if (!query || !sqlEditor) return;
+    const content = sqlEditor.getValue().toLowerCase();
+    // Determine start position for search
+    let startOffset = 0;
+    if (query === lastFindQuery && lastFindPos !== null) {
+      startOffset = lastFindPos + 1;
+    }
+    lastFindQuery = query;
+    let idx = content.indexOf(query, startOffset);
+    if (idx === -1) {
+      // wrap around
+      idx = content.indexOf(query, 0);
+    }
+    if (idx === -1) return;
+    lastFindPos = idx;
+    // Convert offset to line/ch
+    const before = sqlEditor.getValue().slice(0, idx);
+    const lines = before.split("\n");
+    const fromLine = lines.length - 1;
+    const fromCh = lines[lines.length - 1].length;
+    const matchEnd = idx + findInput.value.length;
+    const beforeEnd = sqlEditor.getValue().slice(0, matchEnd);
+    const linesEnd = beforeEnd.split("\n");
+    const toLine = linesEnd.length - 1;
+    const toCh = linesEnd[linesEnd.length - 1].length;
+    sqlEditor.setSelection({ line: fromLine, ch: fromCh }, { line: toLine, ch: toCh });
+    sqlEditor.scrollIntoView({ from: { line: fromLine, ch: fromCh }, to: { line: toLine, ch: toCh } }, 40);
+  }
+
+  findBtn.addEventListener("click", findInEditor);
+  findInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      findInEditor();
+    }
+    if (e.key === "Escape") {
+      findInput.value = "";
+      lastFindQuery = "";
+      lastFindPos = null;
+      sqlEditor.focus();
+    }
+  });
+
   // Recent files dropdown
   const recentFilesBtn = document.getElementById("recentFilesBtn");
   const recentFilesMenu = document.getElementById("recentFilesMenu");
@@ -587,10 +656,17 @@ function setupEventListeners() {
       clearTimeout(draftSaveTimer);
     }
 
+    const currentContent = sqlEditor.getValue();
+    const nowDirty = currentContent !== savedContent;
+    if (nowDirty !== isDirty) {
+      isDirty = nowDirty;
+      vscode.postMessage({ command: "contentDirty", dirty: isDirty });
+    }
+
     draftSaveTimer = setTimeout(() => {
       vscode.postMessage({
         command: "updateQueryDraft",
-        query: sqlEditor.getValue(),
+        query: currentContent,
       });
     }, 200);
   });
@@ -685,9 +761,13 @@ function handleMessage(event) {
       activeConnection = message.data;
       if (typeof activeConnection.lastQuery === "string") {
         sqlEditor.setValue(activeConnection.lastQuery);
+        savedContent = activeConnection.lastQuery;
       }
       if (Array.isArray(activeConnection.recentFiles)) {
         recentFiles = activeConnection.recentFiles;
+      }
+      if (typeof activeConnection.linkedFilePath === "string") {
+        linkedFilePath = activeConnection.linkedFilePath;
       }
       if (
         typeof activeConnection.queryPaneHeight === "number" &&
@@ -724,6 +804,9 @@ function handleMessage(event) {
     case "fileOpened":
       if (typeof message.content === "string") {
         sqlEditor.setValue(message.content);
+        savedContent = message.content;
+        isDirty = false;
+        vscode.postMessage({ command: "contentDirty", dirty: false });
       }
       if (typeof message.filePath === "string") {
         linkedFilePath = message.filePath;
@@ -734,6 +817,9 @@ function handleMessage(event) {
       if (typeof message.filePath === "string") {
         linkedFilePath = message.filePath;
         addRecentFile(message.filePath);
+        savedContent = sqlEditor.getValue();
+        isDirty = false;
+        vscode.postMessage({ command: "contentDirty", dirty: false });
       }
       break;
     case "formatSqlResult":
