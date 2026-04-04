@@ -2,14 +2,49 @@
   "name": "sql4all",
   "displayName": "SQL4ALL",
   "publisher": "sql4all",
-  "description": "Query SQL/NoSQL Database using SQL syntax",
+  "description": "Query SQL/NoSQL Database using SQL syntax — powered by SQLAlchemy",
   "version": "0.0.1",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.110.0"
   },
   "categories": [
+    "Data Science",
+    "Visualization",
     "Other"
   ],
+  "keywords": [
+    "sql",
+    "nosql",
+    "database",
+    "query",
+    "sql client",
+    "database management",
+    "developer tools",
+    "postgresql",
+    "mysql",
+    "sqlite",
+    "mongodb",
+    "oracle",
+    "snowflake",
+    "bigquery",
+    "duckdb",
+    "mariadb",
+    "mssql",
+    "clickhouse",
+    "redshift",
+    "databricks",
+    "aws athena",
+    "aws dynamodb"
+  ],
+  "galleryBanner": {
+    "color": "#2563EB",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/passren/SQL4All"
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
