@@ -322,6 +322,7 @@ export function activate(context: vscode.ExtensionContext) {
   const openPanelDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.openQueryPanel`,
     async () => {
+      if (!(await checkPythonSetup(context))) { return; }
       const selected = await pickConnection(connectionTreeProvider);
       if (!selected) {
         return;
@@ -346,12 +347,16 @@ export function activate(context: vscode.ExtensionContext) {
 
   const addConnectionDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.addConnection`,
-    () => addConnection(context, editorServices),
+    async () => {
+      if (!(await checkPythonSetup(context))) { return; }
+      await addConnection(context, editorServices);
+    },
   );
 
   const connectConnectionDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.connectConnection`,
     async (item?: ConnectionItem) => {
+      if (!(await checkPythonSetup(context))) { return; }
       if (!item) {
         void vscode.commands.executeCommand(
           `${EXTENSION_NAMESPACE}.openQueryPanel`,
@@ -370,7 +375,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   const editConnectionDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.editConnection`,
-    (item?: ConnectionItem) => {
+    async (item?: ConnectionItem) => {
+      if (!(await checkPythonSetup(context))) { return; }
       if (!item) {
         return;
       }
@@ -532,7 +538,7 @@ export function activate(context: vscode.ExtensionContext) {
   checkPythonSetup(context);
 }
 
-async function checkPythonSetup(context: vscode.ExtensionContext): Promise<void> {
+async function checkPythonSetup(context: vscode.ExtensionContext): Promise<boolean> {
   const venvDir = path.join(context.globalStorageUri.fsPath, "python-env");
   const venvPython =
     process.platform === "win32"
@@ -541,22 +547,30 @@ async function checkPythonSetup(context: vscode.ExtensionContext): Promise<void>
 
   // Skip if venv already exists
   if (fs.existsSync(venvPython)) {
-    return;
+    return true;
+  }
+
+  // Check if configured path exists
+  if (getConfiguredPythonPath()) {
+    return true;
   }
 
   // Try to resolve system Python silently
   try {
     await resolveSystemPython();
+    return true;
   } catch {
     // No Python found — prompt user
     const action = await vscode.window.showWarningMessage(
       `${BRAND_NAME} requires Python 3.9+ to run queries. No Python installation was detected.`,
       "Select Python Executable",
-      "Dismiss",
     );
     if (action === "Select Python Executable") {
       await selectPythonExecutable(context);
+      // Re-check after selection
+      return !!(getConfiguredPythonPath());
     }
+    return false;
   }
 }
 

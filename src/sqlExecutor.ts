@@ -482,20 +482,30 @@ function convertToCSV(data: any[]): string {
   }
 
   const headers = Object.keys(data[0]);
-  const csvHeaders = headers.join(",");
+  const csvHeaders = headers.map((h) => escapeCsvField(h)).join(",");
   const csvRows = data.map((row) => {
     return headers
       .map((header) => {
         const value = row[header];
-        if (typeof value === "string" && value.includes(",")) {
-          return `"${value.replace(/"/g, '""')}"`;
+        if (value === null || value === undefined) {
+          return "";
         }
-        return value === null || value === undefined ? "" : value;
+        if (typeof value === "object") {
+          return escapeCsvField(JSON.stringify(value));
+        }
+        return escapeCsvField(String(value));
       })
       .join(",");
   });
 
   return [csvHeaders, ...csvRows].join("\n");
+}
+
+function escapeCsvField(value: string): string {
+  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
 }
 
 async function handleOpenFile(
