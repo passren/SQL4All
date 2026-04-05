@@ -3,7 +3,7 @@
   "displayName": "SQL For ALL",
   "publisher": "sql4all",
   "description": "Query SQL/NoSQL Databases using SQL — powered by SQLAlchemy",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "engines": {
     "vscode": "^1.110.0"
@@ -108,6 +108,18 @@
         "title": "Connect...",
         "category": "SQL4ALL",
         "icon": "$(plug)"
+      },
+      {
+        "command": "sql4all.exportConnections",
+        "title": "Export Connections",
+        "category": "SQL4ALL",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "sql4all.importConnections",
+        "title": "Import Connections",
+        "category": "SQL4ALL",
+        "icon": "$(folder-opened)"
       }
     ],
     "viewsContainers": {
@@ -140,6 +152,16 @@
           "command": "sql4all.refreshConnections",
           "when": "view == sql4all.connections",
           "group": "navigation@2"
+        },
+        {
+          "command": "sql4all.importConnections",
+          "when": "view == sql4all.connections",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sql4all.exportConnections",
+          "when": "view == sql4all.connections",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

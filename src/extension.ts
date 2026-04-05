@@ -516,6 +516,16 @@ export function activate(context: vscode.ExtensionContext) {
     () => selectPythonExecutable(context),
   );
 
+  const exportConnectionsDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.exportConnections`,
+    () => exportConnections(connectionTreeProvider),
+  );
+
+  const importConnectionsDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.importConnections`,
+    () => importConnections(connectionTreeProvider),
+  );
+
   const statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100,
@@ -535,6 +545,8 @@ export function activate(context: vscode.ExtensionContext) {
     connectDatabaseDisposable,
     reloadDriverDisposable,
     selectPythonExecutableDisposable,
+    exportConnectionsDisposable,
+    importConnectionsDisposable,
     statusBar,
   );
 
@@ -542,6 +554,125 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Check Python availability on first activation
   checkPythonSetup(context);
+}
+
+async function exportConnections(provider: ConnectionTreeProvider): Promise<void> {
+  const connections = provider.getConnections();
+  const names = Object.keys(connections).sort((a, b) => a.localeCompare(b));
+
+  if (names.length === 0) {
+    vscode.window.showInformationMessage("No connections to export.");
+    return;
+  }
+
+  const picks = names.map((name) => ({
+    label: name,
+    picked: true,
+  }));
+
+  const selected = await vscode.window.showQuickPick(picks, {
+    canPickMany: true,
+    placeHolder: "Select connections to export",
+    title: "Export Connections",
+  });
+
+  if (!selected || selected.length === 0) {
+    return;
+  }
+
+  const uri = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file("sql4all-connections.json"),
+    filters: { "JSON Files": ["json"] },
+    title: "Save Connections",
+  });
+
+  if (!uri) {
+    return;
+  }
+
+  const exportData: ConnectionStore = {};
+  for (const item of selected) {
+    exportData[item.label] = connections[item.label];
+  }
+
+  const content = JSON.stringify(exportData, null, 2);
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
+  vscode.window.showInformationMessage(
+    `Exported ${selected.length} connection(s) successfully.`,
+  );
+}
+
+function generateRandomSuffix(length: number = 4): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+async function importConnections(provider: ConnectionTreeProvider): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectMany: false,
+    filters: { "JSON Files": ["json"] },
+    title: "Import Connections",
+  });
+
+  if (!uris || uris.length === 0) {
+    return;
+  }
+
+  let rawData: Record<string, unknown>;
+  try {
+    const bytes = await vscode.workspace.fs.readFile(uris[0]);
+    rawData = JSON.parse(Buffer.from(bytes).toString("utf-8"));
+  } catch (err: any) {
+    vscode.window.showErrorMessage(
+      `Failed to read import file: ${err?.message || String(err)}`,
+    );
+    return;
+  }
+
+  if (!rawData || typeof rawData !== "object" || Array.isArray(rawData)) {
+    vscode.window.showErrorMessage("Invalid connection file format.");
+    return;
+  }
+
+  const existingConnections = provider.getConnections();
+  let importedCount = 0;
+
+  for (const [name, rawConn] of Object.entries(rawData)) {
+    const connection = normalizeConnection(rawConn);
+    let finalName = name;
+
+    if (existingConnections[name]) {
+      const choice = await vscode.window.showWarningMessage(
+        `Connection "${name}" already exists.`,
+        { modal: true },
+        "Overwrite",
+        "Rename",
+        "Skip",
+      );
+
+      if (choice === "Skip" || !choice) {
+        continue;
+      }
+
+      if (choice === "Rename") {
+        finalName = `${name}_${generateRandomSuffix()}`;
+      }
+    }
+
+    existingConnections[finalName] = connection;
+    importedCount++;
+  }
+
+  if (importedCount > 0) {
+    await provider.saveConnections(existingConnections);
+    vscode.window.showInformationMessage(
+      `Imported ${importedCount} connection(s) successfully.`,
+    );
+  }
 }
 
 async function checkPythonSetup(context: vscode.ExtensionContext): Promise<boolean> {
