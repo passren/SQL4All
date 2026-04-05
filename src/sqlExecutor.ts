@@ -15,10 +15,12 @@ export interface SqlExecutorServices {
   panelsByConnection: Map<string, vscode.WebviewPanel>;
   getDriverIcon(connection: DbConnection): vscode.Uri | undefined;
   revealConnection(connectionName: string): void;
+  getConnection(name: string): DbConnection | undefined;
   runPythonScript(
     context: vscode.ExtensionContext,
     scriptArgs: string[],
     onSpawn?: (child: ChildProcess) => void,
+    envVars?: Record<string, string>,
   ): Promise<string>;
 }
 
@@ -112,6 +114,11 @@ function updateWebviewContent(
         path.join(context.extensionPath, "media", "sql-executor.js"),
       ),
     );
+    const sqlUtilsJsPath = panel.webview.asWebviewUri(
+      vscode.Uri.file(
+        path.join(context.extensionPath, "media", "sql-utils.js"),
+      ),
+    );
     const cmCssPath = panel.webview.asWebviewUri(
       vscode.Uri.file(
         path.join(context.extensionPath, "media", "codemirror.min.css"),
@@ -129,6 +136,7 @@ function updateWebviewContent(
     html = html
       .replace("${cssPath}", cssPath.toString())
       .replace("${jsPath}", jsPath.toString())
+      .replace("${sqlUtilsJsPath}", sqlUtilsJsPath.toString())
       .replace("${cmCssPath}", cmCssPath.toString())
       .replace("${cmJsPath}", cmJsPath.toString())
       .replace("${cmSqlPath}", cmSqlPath.toString());
@@ -340,7 +348,7 @@ function cancelRunningQuery(
     runningProcesses.delete(connectionName);
     panel.webview.postMessage({
       command: "queryError",
-      error: "Query cancelled by user.",
+      error: "Execution cancelled by user.",
     });
   }
 }
@@ -357,7 +365,7 @@ async function executeQuery(
     if (!queryText || !queryText.trim()) {
       panel.webview.postMessage({
         command: "queryError",
-        error: "Query is empty.",
+        error: "Nothing to execute.",
       });
       return;
     }
@@ -368,7 +376,10 @@ async function executeQuery(
       "query_executor.py",
     );
 
-    const connectionString = connection.connectionString || "";
+    // Re-read connection from storage to pick up any edits (e.g. envVars)
+    const freshConnection = services.getConnection(connectionName) ?? connection;
+
+    const connectionString = freshConnection.connectionString || "";
     if (!connectionString) {
       panel.webview.postMessage({
         command: "queryError",
@@ -387,9 +398,14 @@ async function executeQuery(
       args.push(`--params=${paramsRaw}`);
     }
 
+    const envVars = freshConnection.envVars;
+    if (envVars && Object.keys(envVars).length > 0) {
+      args.push(`--env-vars=${JSON.stringify(envVars)}`);
+    }
+
     const result = await services.runPythonScript(context, args, (child) => {
       runningProcesses.set(connectionName, child);
-    });
+    }, freshConnection.envVars);
 
     runningProcesses.delete(connectionName);
 
@@ -406,10 +422,18 @@ async function executeQuery(
     if (error?.killed) {
       return;
     }
-    vscode.window.showErrorMessage(`Query execution failed: ${error.message}`);
+    let errorText = error.message || "Execution failed.";
+    try {
+      const parsed = JSON.parse(errorText);
+      if (parsed && typeof parsed.error === "string") {
+        errorText = parsed.error;
+      }
+    } catch {
+      // not JSON, use as-is
+    }
     panel.webview.postMessage({
       command: "queryError",
-      error: error.message,
+      error: errorText,
     });
   }
 }

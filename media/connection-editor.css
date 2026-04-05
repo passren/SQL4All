@@ -224,6 +224,22 @@ textarea.editable {
   margin-top: 0;
 }
 
+.hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--vscode-descriptionForeground);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--vscode-descriptionForeground);
+  cursor: help;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 .params-wrap {
   margin-top: 4px;
   border: 1px solid var(--vscode-panel-border, var(--vscode-input-border));

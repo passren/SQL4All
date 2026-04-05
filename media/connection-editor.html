@@ -124,6 +124,38 @@
         </div>
 
         <div class="field field-full">
+          <div class="section-header">
+            <div class="section-title">Environment Variables
+              <span class="hint-icon" title="These are NOT part of the connection string. They will be passed as environment variables to the runtime when executing SQL through this connection.">?</span>
+            </div>
+            <button
+              id="addEnvVar"
+              class="secondary icon-btn"
+              type="button"
+              title="Add environment variable"
+              aria-label="Add environment variable"
+            >
+              +
+            </button>
+          </div>
+          <div class="params-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Variable</th>
+                  <th>Value</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="envVarsBody"></tbody>
+            </table>
+          </div>
+          <div id="envVarsEmpty" class="param-empty">
+            No environment variables.
+          </div>
+        </div>
+
+        <div class="field field-full">
           <label>Connection String</label>
           <div class="inline-field">
             <textarea id="connectionString" readonly rows="3"></textarea>

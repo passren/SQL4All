@@ -9,6 +9,7 @@ export interface DbConnection {
   connectionString?: string;
   databaseType?: string;
   additionalParameters?: Record<string, string>;
+  envVars?: Record<string, string>;
 }
 
 export type ConnectionStore = Record<string, DbConnection>;
@@ -59,6 +60,7 @@ export function normalizeConnection(raw: unknown): DbConnection {
     connectionString: String(source.connectionString ?? "").trim() || undefined,
     databaseType: String(source.databaseType ?? "").trim() || undefined,
     additionalParameters: normalizeAdditionalParameters(rawAdditionalParameters),
+    envVars: normalizeAdditionalParameters(source.envVars),
   };
 }
 

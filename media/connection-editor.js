@@ -190,6 +190,9 @@ document.getElementById("driver").addEventListener("input", function () {
 const paramsBody = document.getElementById("additionalParamsBody");
 const paramsEmpty = document.getElementById("additionalParamsEmpty");
 
+const envVarsBody = document.getElementById("envVarsBody");
+const envVarsEmpty = document.getElementById("envVarsEmpty");
+
 // Handle database type selection
 const dbTypeWidget = document.getElementById("dbTypeWidget");
 const dbTypeHidden = document.getElementById("databaseType");
@@ -434,6 +437,75 @@ function collectAdditionalParameters() {
   return result;
 }
 
+// --- Environment Variables ---
+function refreshEnvVarsEmptyState() {
+  envVarsEmpty.style.display =
+    envVarsBody.children.length === 0 ? "block" : "none";
+}
+
+function createEnvVarRow(key = "", value = "") {
+  const row = document.createElement("tr");
+
+  const keyCell = document.createElement("td");
+  const keyInput = document.createElement("input");
+  keyInput.className = "param-input";
+  keyInput.value = key;
+  keyCell.appendChild(keyInput);
+
+  const valueCell = document.createElement("td");
+  const valueInput = document.createElement("input");
+  valueInput.className = "param-input";
+  valueInput.value = value;
+  valueCell.appendChild(valueInput);
+
+  const actionCell = document.createElement("td");
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "secondary icon-btn";
+  deleteBtn.textContent = "x";
+  deleteBtn.title = "Delete environment variable";
+  deleteBtn.setAttribute("aria-label", "Delete environment variable");
+  deleteBtn.addEventListener("click", () => {
+    row.remove();
+    refreshEnvVarsEmptyState();
+  });
+  actionCell.appendChild(deleteBtn);
+
+  row.appendChild(keyCell);
+  row.appendChild(valueCell);
+  row.appendChild(actionCell);
+  envVarsBody.appendChild(row);
+  refreshEnvVarsEmptyState();
+}
+
+function loadInitialEnvVars() {
+  const initialEnvVars = initial.connection.envVars || {};
+  Object.entries(initialEnvVars).forEach(([key, value]) => {
+    createEnvVarRow(String(key || ""), String(value || ""));
+  });
+  refreshEnvVarsEmptyState();
+}
+
+function collectEnvVars() {
+  const result = {};
+  const rows = Array.from(envVarsBody.querySelectorAll("tr"));
+  for (const row of rows) {
+    const inputs = row.querySelectorAll("input");
+    if (inputs.length < 2) {
+      continue;
+    }
+
+    const key = inputs[0].value.trim();
+    if (!key) {
+      continue;
+    }
+
+    result[key] = inputs[1].value;
+  }
+
+  return result;
+}
+
 function updateConnectionString() {
   const host = document.getElementById("host").value.trim() || "localhost";
   const port = document.getElementById("port").value.trim();
@@ -525,6 +597,7 @@ async function copyConnectionString() {
 }
 
 loadInitialParams();
+loadInitialEnvVars();
 updateConnectionString();
 
 // When user directly edits connection string, mark it to preserve the value
@@ -535,6 +608,10 @@ document.getElementById("connectionString").addEventListener("input", function (
 document.getElementById("addParam").addEventListener("click", () => {
   createParamRow("", "");
   updateConnectionString();
+});
+
+document.getElementById("addEnvVar").addEventListener("click", () => {
+  createEnvVarRow("", "");
 });
 
 document
@@ -616,6 +693,7 @@ saveBtn.addEventListener("click", () => {
     connectionString: realConnectionString,
     databaseType: selectedDbType || undefined,
     additionalParameters,
+    envVars: collectEnvVars(),
   };
 
   vscode.postMessage({ command: "save", data });

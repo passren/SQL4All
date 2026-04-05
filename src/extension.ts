@@ -213,13 +213,18 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 
     try {
       const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
+      const envVars = parent.connection.envVars;
       const args = [
         pythonScript,
         `--connection-string=${parent.connection.connectionString || ""}`,
         `--action=list-tables`,
       ];
 
-      const result = await runPythonScript(this.context, args);
+      if (envVars && Object.keys(envVars).length > 0) {
+        args.push(`--env-vars=${JSON.stringify(envVars)}`);
+      }
+
+      const result = await runPythonScript(this.context, args, undefined, envVars);
       const parsed = JSON.parse(result);
 
       const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
@@ -301,6 +306,7 @@ export function activate(context: vscode.ExtensionContext) {
     panelsByConnection,
     getDriverIcon: (conn) => connectionTreeProviderRef?.getDriverIcon(conn),
     revealConnection: (name) => revealConnection(name),
+    getConnection: (name) => connectionTreeProvider.getConnection(name),
     runPythonScript,
   });
 
@@ -637,9 +643,10 @@ async function runPythonScript(
   context: vscode.ExtensionContext,
   scriptArgs: string[],
   onSpawn?: (child: ChildProcess) => void,
+  envVars?: Record<string, string>,
 ): Promise<string> {
   const pythonExecutable = await ensurePythonEnvironment(context);
-  return runProcess(pythonExecutable, scriptArgs, onSpawn);
+  return runProcess(pythonExecutable, scriptArgs, onSpawn, envVars);
 }
 
 async function ensurePythonEnvironment(
@@ -1016,9 +1023,13 @@ function getWindowsCandidatePythonPaths(): string[] {
   return Array.from(new Set(candidates));
 }
 
-async function runProcess(command: string, args: string[], onSpawn?: (child: ChildProcess) => void): Promise<string> {
+async function runProcess(command: string, args: string[], onSpawn?: (child: ChildProcess) => void, envVars?: Record<string, string>): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(command, args);
+    const spawnOptions: any = {};
+    if (envVars && Object.keys(envVars).length > 0) {
+      spawnOptions.env = { ...process.env, ...envVars };
+    }
+    const child = spawn(command, args, spawnOptions);
     if (onSpawn) {
       onSpawn(child);
     }

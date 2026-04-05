@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SQL4ALL Query</title>
+    <title>SQL4ALL Execute</title>
     <link rel="stylesheet" href="${cssPath}" />
     <link rel="stylesheet" href="${cmCssPath}" />
   </head>
@@ -75,7 +75,7 @@
             <button
               id="runBtn"
               class="btn btn-small btn-icon btn-primary"
-              title="Run Query (Ctrl/Cmd+Enter)"
+              title="Execute SQL (Ctrl/Cmd+Enter)"
             >
               <span class="icon" aria-hidden="true">
                 <svg viewBox="0 0 16 16" focusable="false">
@@ -113,7 +113,6 @@
 
       <section class="results-pane">
         <div class="results-header">
-          <div class="section-title">Query Results</div>
           <div class="results-tabs" role="tablist" aria-label="Result views">
             <button
               id="resultsTabTable"
@@ -134,6 +133,16 @@
               type="button"
             >
               JSON
+            </button>
+            <button
+              id="resultsTabHistory"
+              class="results-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="resultsHistoryWrap"
+              type="button"
+            >
+              History
             </button>
           </div>
           <div class="result-actions">
@@ -187,15 +196,26 @@
 {"message": "Run SQL to view results"}</pre
             >
           </div>
+          <div
+            id="resultsHistoryWrap"
+            class="results-history-wrap results-panel"
+            role="tabpanel"
+            aria-labelledby="resultsTabHistory"
+          >
+            <div id="historyContainer" class="history-container">
+              <p class="placeholder">Execution history will appear here.</p>
+            </div>
+          </div>
         </div>
         <div id="resultsStatus" class="results-status results-status-neutral">
-          Ready to query.
+          Ready to execute.
         </div>
       </section>
     </div>
 
     <script src="${cmJsPath}"></script>
     <script src="${cmSqlPath}"></script>
+    <script src="${sqlUtilsJsPath}"></script>
     <script src="${jsPath}"></script>
   </body>
 </html>

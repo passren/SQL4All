@@ -96,6 +96,12 @@ def parse_arguments():
         default='',
         help='Optional JSON query parameters',
     )
+    parser.add_argument(
+        '--env-vars',
+        default='',
+        dest='env_vars',
+        help='JSON object of environment variables set by frontend',
+    )
     return parser.parse_args()
 
 
@@ -255,6 +261,19 @@ def main():
         logger.debug('Action: %s', args.action)
         masked = _mask_password(args.connection_string)
         logger.debug('Connection (masked): %s', masked)
+
+        if args.env_vars:
+            try:
+                env_vars = json.loads(args.env_vars)
+                if isinstance(env_vars, dict) and env_vars:
+                    logger.debug(
+                        'Environment variables: %s',
+                        json.dumps(env_vars)
+                    )
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(
+                    'Failed to parse env-vars: %s', e
+                )
 
         sa = ensure_sqlalchemy()
         engine = sa.create_engine(

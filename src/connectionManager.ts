@@ -182,6 +182,7 @@ export async function openConnectionEditor(
       connectionString?: string;
       databaseType?: string;
       additionalParameters?: Record<string, string>;
+      envVars?: Record<string, string>;
     };
 
     const name = payload.name.trim();
@@ -293,6 +294,7 @@ export async function openConnectionEditor(
       connectionString: payload.connectionString?.trim() || undefined,
       databaseType: payload.databaseType?.trim() || undefined,
       additionalParameters: payload.additionalParameters ?? {},
+      envVars: payload.envVars ?? {},
     });
 
     vscode.window.showInformationMessage(

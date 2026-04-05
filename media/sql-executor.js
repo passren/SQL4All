@@ -14,8 +14,10 @@ let applySavedPaneHeight = null;
 let isQueryExecuting = false;
 let queryExecutionStartedAt = null;
 let queryExecutionTimer = null;
+let lastExecutedQuery = null;
 let recentFiles = [];
 let linkedFilePath = null;
+let executionHistory = []; // Session-only execution history
 const MAX_RECENT_FILES = 10;
 let savedContent = "";
 let isDirty = false;
@@ -38,55 +40,108 @@ function getResultsJsonWrap() {
 function setActiveResultTab(tab) {
   activeResultTab = tab;
   const isTable = tab === "table";
+  const isHistory = tab === "history";
   const tableTab = document.getElementById("resultsTabTable");
   const jsonTab = document.getElementById("resultsTabJson");
+  const historyTab = document.getElementById("resultsTabHistory");
   const tablePanel = getResultsContainer();
   const jsonPanel = getResultsJsonWrap();
+  const historyPanel = document.getElementById("resultsHistoryWrap");
+  
   tableTab.classList.toggle("is-active", isTable);
-  jsonTab.classList.toggle("is-active", !isTable);
+  jsonTab.classList.toggle("is-active", !isTable && !isHistory);
+  historyTab.classList.toggle("is-active", isHistory);
+  
   tableTab.setAttribute("aria-selected", String(isTable));
-  jsonTab.setAttribute("aria-selected", String(!isTable));
+  jsonTab.setAttribute("aria-selected", String(!isTable && !isHistory));
+  historyTab.setAttribute("aria-selected", String(isHistory));
+  
   tablePanel.classList.toggle("is-active", isTable);
-  jsonPanel.classList.toggle("is-active", !isTable);
+  jsonPanel.classList.toggle("is-active", !isTable && !isHistory);
+  historyPanel.classList.toggle("is-active", isHistory);
 }
 
-function escapeHtmlChars(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function getStatementCategoryFromQuery(query) {
+  const utils = window.SQL4ALLExecutorUtils;
+  const statementType = utils.getStatementType(query);
+  
+  if (!statementType) {
+    return "unknown";
+  }
+  
+  const dql = ["SELECT"];
+  const ddl = ["CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME", "COMMENT"];
+  const dml = ["INSERT", "UPDATE", "DELETE", "MERGE"];
+  
+  if (dql.includes(statementType)) {
+    return "dql";
+  }
+  if (ddl.includes(statementType)) {
+    return "ddl";
+  }
+  if (dml.includes(statementType)) {
+    return "dml";
+  }
+  return "unknown";
 }
 
-function syntaxHighlightJson(json) {
-  const parts = [];
-  let lastIndex = 0;
-  const regex =
-    /("(?:\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"\s*:?|\b(?:true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g;
-  let m;
-  while ((m = regex.exec(json)) !== null) {
-    if (m.index > lastIndex) {
-      parts.push(escapeHtmlChars(json.slice(lastIndex, m.index)));
-    }
-    const token = m[0];
-    let cls;
-    if (token[0] === '"') {
-      cls = /:\s*$/.test(token) ? "json-key" : "json-string";
-    } else if (token === "true" || token === "false") {
-      cls = "json-boolean";
-    } else if (token === "null") {
-      cls = "json-null";
-    } else {
-      cls = "json-number";
-    }
-    parts.push(`<span class="${cls}">${escapeHtmlChars(token)}</span>`);
-    lastIndex = m.index + token.length;
+function addExecutionHistoryEntry(query, resultCount, error, duration) {
+  const startTime = queryExecutionStartedAt || Date.now();
+  const category = getStatementCategoryFromQuery(query);
+  
+  const entry = {
+    id: Date.now() + Math.random(),
+    startTime: new Date(startTime),
+    duration: duration || 0,
+    query: query,
+    resultCount: resultCount || 0,
+    error: error || null,
+    category: category,
+  };
+  
+  executionHistory.unshift(entry);
+  renderExecutionHistory();
+}
+
+function renderExecutionHistory() {
+  const container = document.getElementById("historyContainer");
+  
+  if (executionHistory.length === 0) {
+    container.innerHTML = '<p class="placeholder">Execution history will appear here.</p>';
+    return;
   }
-  if (lastIndex < json.length) {
-    parts.push(escapeHtmlChars(json.slice(lastIndex)));
-  }
-  return parts.join("");
+  
+  const historyHtml = executionHistory.map((entry) => {
+    const utils = window.SQL4ALLExecutorUtils;
+    const escapeHtml = utils.escapeHtmlChars;
+    const timeStr = entry.startTime.toLocaleTimeString();
+    const durationStr = entry.duration.toFixed(2);
+    const resultText = entry.error
+      ? `<span class="history-error">Error: ${escapeHtml(entry.error)}</span>`
+      : `<span class="history-success">${entry.resultCount} result${entry.resultCount === 1 ? "" : "s"}</span>`;
+    
+    const sqlPreview = entry.query.substring(0, 100).replace(/\n/g, " ");
+    const sqlFull = entry.query.trim();
+    
+    return `
+      <div class="history-entry history-${entry.category}${entry.error ? " has-error" : ""}">
+        <div class="history-header">
+          <div class="history-time">${timeStr}</div>
+          <div class="history-duration">${durationStr}s</div>
+          <div class="history-result">${resultText}</div>
+        </div>
+        <div class="history-sql" title="${escapeHtml(sqlFull)}">${escapeHtml(sqlPreview)}</div>
+      </div>
+    `;
+  }).join("");
+  
+  container.innerHTML = historyHtml;
 }
 
 function renderResultsJson(payload) {
+  const utils = window.SQL4ALLExecutorUtils;
   const json = JSON.stringify(payload, null, 2);
-  getResultsJsonContainer().innerHTML = syntaxHighlightJson(json);
+  getResultsJsonContainer().innerHTML = utils.syntaxHighlightJson(json);
 }
 
 function getResultsStatus() {
@@ -104,16 +159,10 @@ function setResultStatus(message, type = "neutral") {
   status.textContent = message;
 }
 
-function formatElapsedSeconds(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    return "0.00";
-  }
-  return seconds.toFixed(2);
-}
-
 function startExecutionStatus(targetName) {
+  const utils = window.SQL4ALLExecutorUtils;
   queryExecutionStartedAt = Date.now();
-  setResultStatus(`Running query against ${targetName}... (0.00s)`, "loading");
+  setResultStatus(`Executing SQL against ${targetName}... (0.00s)`, "loading");
 
   if (queryExecutionTimer !== null) {
     clearInterval(queryExecutionTimer);
@@ -125,7 +174,7 @@ function startExecutionStatus(targetName) {
     }
     const elapsedSeconds = (Date.now() - queryExecutionStartedAt) / 1000;
     setResultStatus(
-      `Running query against ${targetName}... (${formatElapsedSeconds(elapsedSeconds)}s)`,
+      `Executing SQL against ${targetName}... (${utils.formatElapsedSeconds(elapsedSeconds)}s)`,
       "loading",
     );
   }, 100);
@@ -162,81 +211,8 @@ function renderPlaceholder(message, type = "neutral") {
   container.appendChild(emptyState);
 }
 
-function getTableColumns(rows) {
-  const columns = new Set();
-  rows.forEach((row) => {
-    if (row && typeof row === "object" && !Array.isArray(row)) {
-      Object.keys(row).forEach((key) => columns.add(key));
-    }
-  });
-  return Array.from(columns);
-}
-
-function normalizeQueryPayload(data) {
-  if (Array.isArray(data)) {
-    const columns = getTableColumns(data);
-    return {
-      kind: "result-set",
-      rows: data,
-      columns,
-      rowCount: data.length,
-      affectedRows: undefined,
-      message: `Returned ${data.length} row(s)`,
-    };
-  }
-
-  if (data && typeof data === "object") {
-    const rows = Array.isArray(data.rows)
-      ? data.rows
-      : Array.isArray(data.results)
-        ? data.results
-        : [];
-    const columns =
-      Array.isArray(data.columns) && data.columns.length > 0
-        ? data.columns
-        : getTableColumns(rows);
-
-    return {
-      kind: data.kind || (rows.length > 0 ? "result-set" : "command-result"),
-      rows,
-      columns,
-      rowCount: Number.isInteger(data.rowCount) ? data.rowCount : rows.length,
-      affectedRows: Number.isInteger(data.affectedRows)
-        ? data.affectedRows
-        : undefined,
-      message: data.message || "",
-    };
-  }
-
-  return {
-    kind: "command-result",
-    rows: [],
-    columns: [],
-    rowCount: 0,
-    affectedRows: undefined,
-    message: "",
-  };
-}
-
-function formatCellValue(value) {
-  if (value === null || value === undefined) {
-    return { text: "NULL", title: "NULL", className: "cell-null" };
-  }
-
-  if (typeof value === "object") {
-    const json = JSON.stringify(value);
-    return {
-      text: json,
-      title: JSON.stringify(value, null, 2),
-      className: "cell-object",
-    };
-  }
-
-  const text = String(value);
-  return { text, title: text, className: "" };
-}
-
 function renderResultsTable(payload, elapsedSeconds) {
+  const utils = window.SQL4ALLExecutorUtils;
   const container = getResultsContainer();
   const rows = payload.rows;
   const columns = payload.columns;
@@ -249,7 +225,7 @@ function renderResultsTable(payload, elapsedSeconds) {
       "neutral",
     );
     setResultStatus(
-      `${payload.message || "Statement executed successfully."} (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+      `${payload.message || "Statement executed successfully."} (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
       "neutral",
     );
     return;
@@ -258,9 +234,9 @@ function renderResultsTable(payload, elapsedSeconds) {
   if (rows.length === 0 || columns.length === 0) {
     setResultMetrics(0, 0);
     setExportState(false);
-    renderPlaceholder("No documents matched the query.", "neutral");
+    renderPlaceholder("Execution returned no rows.", "neutral");
     setResultStatus(
-      `Query completed with no matching documents. (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+      `Execution completed with no returned rows. (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
       "neutral",
     );
     return;
@@ -298,7 +274,7 @@ function renderResultsTable(payload, elapsedSeconds) {
 
     columns.forEach((column) => {
       const td = document.createElement("td");
-      const formatted = formatCellValue(row[column]);
+      const formatted = utils.formatCellValue(row[column]);
       td.textContent = formatted.text;
       td.title = formatted.title;
       if (formatted.className) {
@@ -320,7 +296,7 @@ function renderResultsTable(payload, elapsedSeconds) {
     `${
       payload.message ||
       `Showing ${payload.rowCount} document${payload.rowCount === 1 ? "" : "s"} from MongoDB.`
-    } (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+    } (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
     "success",
   );
 }
@@ -335,20 +311,13 @@ function resetRunButton(label = "Run") {
   runBtn.disabled = false;
   runBtn.classList.remove("btn-danger");
   runBtn.classList.add("btn-primary");
-  runBtn.title = "Run Query (Ctrl/Cmd+Enter)";
+  runBtn.title = "Execute SQL (Ctrl/Cmd+Enter)";
   runBtnLabel.textContent = label;
   runBtnIcon.innerHTML = PLAY_ICON;
 }
 
-function getContainerGap(container) {
-  const styles = window.getComputedStyle(container);
-  const gapValue =
-    styles.rowGap && styles.rowGap !== "normal" ? styles.rowGap : styles.gap;
-  const parsed = parseFloat(gapValue || "0");
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function setupPaneResizer(initialHeight) {
+  const utils = window.SQL4ALLExecutorUtils;
   const container = document.querySelector(".container");
   const queryPane = document.querySelector(".query-pane");
   const resultsPane = document.querySelector(".results-pane");
@@ -359,7 +328,7 @@ function setupPaneResizer(initialHeight) {
   }
 
   const clampQueryHeight = (height) => {
-    const gap = getContainerGap(container);
+    const gap = utils.getContainerGap(container);
     const containerHeight = container.clientHeight;
     const dividerHeight = divider.getBoundingClientRect().height;
     const availablePaneHeight =
@@ -522,6 +491,9 @@ function setupEventListeners() {
   document
     .getElementById("resultsTabJson")
     .addEventListener("click", () => setActiveResultTab("json"));
+  document
+    .getElementById("resultsTabHistory")
+    .addEventListener("click", () => setActiveResultTab("history"));
 
   document.getElementById("copyJsonBtn").addEventListener("click", async () => {
     const text = getResultsJsonContainer().textContent || "";
@@ -590,7 +562,9 @@ function setupEventListeners() {
 
   function findInEditor() {
     const query = findInput.value.toLowerCase();
-    if (!query || !sqlEditor) return;
+    if (!query || !sqlEditor) {
+      return;
+    }
     const content = sqlEditor.getValue().toLowerCase();
     // Determine start position for search
     let startOffset = 0;
@@ -603,7 +577,9 @@ function setupEventListeners() {
       // wrap around
       idx = content.indexOf(query, 0);
     }
-    if (idx === -1) return;
+    if (idx === -1) {
+      return;
+    }
     lastFindPos = idx;
     // Convert offset to line/ch
     const before = sqlEditor.getValue().slice(0, idx);
@@ -679,16 +655,21 @@ function setupEventListeners() {
 }
 
 function applyLimit(query) {
+  const utils = window.SQL4ALLExecutorUtils;
   const limitSelect = document.getElementById("limitSelect");
   const limitValue = limitSelect ? limitSelect.value : "";
-  if (!limitValue) {
+  if (!limitValue || !utils) {
     return query;
   }
-  // Check if query already has a LIMIT clause
-  if (/\bLIMIT\s+\d+/i.test(query)) {
+
+  if (utils.getStatementType(query) !== "SELECT") {
     return query;
   }
-  // Strip trailing semicolons, add LIMIT, re-add semicolon
+
+  if (utils.hasTopLevelLimit(query)) {
+    return query;
+  }
+
   const trimmed = query.replace(/;\s*$/, "");
   return `${trimmed} LIMIT ${limitValue}`;
 }
@@ -706,7 +687,7 @@ function executeQuery() {
   }
 
   if (!rawQuery) {
-    setResultStatus("Query is empty.", "error");
+    setResultStatus("Nothing to execute.", "error");
     return;
   }
 
@@ -728,6 +709,7 @@ function executeQuery() {
   executeBtnLabel.textContent = "Stop";
   executeBtnIcon.innerHTML = STOP_ICON;
   isQueryExecuting = true;
+  lastExecutedQuery = rawQuery;
   const targetName = activeConnection?.name || "selected connection";
   startExecutionStatus(targetName);
 
@@ -750,13 +732,16 @@ function exportResults(format) {
   });
 }
 
-function displayResults(data, elapsedSeconds) {
-  const payload = normalizeQueryPayload(data);
+function displayResults(data, elapsedSeconds, executedQuery) {
+  const payload = window.SQL4ALLExecutorUtils.normalizeQueryPayload(data);
   currentResults = payload.rows;
   renderResultsTable(payload, elapsedSeconds);
   renderResultsJson(payload.rows);
   resetRunButton("Run");
   isQueryExecuting = false;
+  
+  addExecutionHistoryEntry(executedQuery, payload.rowCount, null, elapsedSeconds);
+  setActiveResultTab("table");
 }
 
 function handleMessage(event) {
@@ -784,23 +769,54 @@ function handleMessage(event) {
         syncPaneLayoutToExtension();
       }
       setResultStatus(
-        `Connected to ${activeConnection.name}. Ready to query.`,
+        `Connected to ${activeConnection.name}. Ready to execute.`,
         "neutral",
       );
       break;
     case "queryResults":
-      displayResults(message.data, stopExecutionStatus());
+      {
+      const elapsedSeconds = stopExecutionStatus();
+      const executedQuery = lastExecutedQuery || "";
+      const category = getStatementCategoryFromQuery(executedQuery);
+      
+      // For DQL queries, display results normally (which handles tab switching)
+      if (category === "dql") {
+        displayResults(message.data, elapsedSeconds, executedQuery);
+      } else {
+        // For DDL/DML queries, log to history and switch to history tab
+        addExecutionHistoryEntry(executedQuery, message.data?.rowCount || 0, null, elapsedSeconds);
+        setActiveResultTab("history");
+        
+        const rowsAffected = message.data?.rowCount || 0;
+        const resultMessage = rowsAffected === 0 
+          ? "Executed successfully."
+          : `Executed successfully. Rows affected: ${rowsAffected}.`;
+        setResultStatus(
+          `${resultMessage} (${window.SQL4ALLExecutorUtils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+          "success",
+        );
+        resetRunButton("Run");
+        isQueryExecuting = false;
+      }
+      }
       break;
     case "queryError":
       {
       const elapsedSeconds = stopExecutionStatus();
+      const executedQuery = lastExecutedQuery || "";
+      
       currentResults = [];
       setResultMetrics(0, 0);
       setExportState(false);
-      renderPlaceholder(message.error || "Query failed.", "error");
-      renderResultsJson({ error: message.error || "Query failed." });
+      renderPlaceholder(message.error || "Execution failed.", "error");
+      renderResultsJson({ error: message.error || "Execution failed." });
+      
+      // Log error to history and switch to history tab
+      addExecutionHistoryEntry(executedQuery, 0, message.error || "Execution failed.", elapsedSeconds);
+      setActiveResultTab("history");
+      
       setResultStatus(
-        `Query error: ${message.error} (${formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+        `Execution failed. (${window.SQL4ALLExecutorUtils.formatElapsedSeconds(elapsedSeconds || 0)}s) — See History for details.`,
         "error",
       );
       resetRunButton("Run");
