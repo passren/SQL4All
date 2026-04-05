@@ -527,6 +527,37 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   console.log(`${BRAND_NAME} extension activated`);
+
+  // Check Python availability on first activation
+  checkPythonSetup(context);
+}
+
+async function checkPythonSetup(context: vscode.ExtensionContext): Promise<void> {
+  const venvDir = path.join(context.globalStorageUri.fsPath, "python-env");
+  const venvPython =
+    process.platform === "win32"
+      ? path.join(venvDir, "Scripts", "python.exe")
+      : path.join(venvDir, "bin", "python");
+
+  // Skip if venv already exists
+  if (fs.existsSync(venvPython)) {
+    return;
+  }
+
+  // Try to resolve system Python silently
+  try {
+    await resolveSystemPython();
+  } catch {
+    // No Python found — prompt user
+    const action = await vscode.window.showWarningMessage(
+      `${BRAND_NAME} requires Python 3.9+ to run queries. No Python installation was detected.`,
+      "Select Python Executable",
+      "Dismiss",
+    );
+    if (action === "Select Python Executable") {
+      await selectPythonExecutable(context);
+    }
+  }
 }
 
 function revealConnectionInTree(

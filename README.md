@@ -1,10 +1,10 @@
 # <img src="media/icons/sql4all-icon.png" alt="" width="64" height="64"> SQL4ALL
 
-![Version](https://img.shields.io/badge/version-0.3.1-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![VS Code](https://img.shields.io/badge/VS%20Code-%3E%3D1.110.0-blue?logo=visual-studio-code)
-![Downloads](https://img.shields.io/visual-studio-marketplace/d/sql4all.sql4all)
-![Python](https://img.shields.io/badge/python-%3E%3D3.9-yellow?logo=python)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/sql4all.sql4all)](https://marketplace.visualstudio.com/items?itemName=sql4all.sql4all)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/passren/SQL4All/blob/main/LICENSE)
+[![VS Code](https://img.shields.io/badge/VS%20Code-%3E%3D1.110.0-blue?logo=visual-studio-code)](https://code.visualstudio.com/)
+[![Downloads](https://img.shields.io/visual-studio-marketplace/d/sql4all.sql4all)](https://marketplace.visualstudio.com/items?itemName=sql4all.sql4all)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.9-yellow?logo=python)](https://www.python.org/downloads/)
 
 A powerful VS Code extension for querying SQL and NoSQL databases using standard SQL syntax. Write SQL queries and execute them against various supported database engines — powered by SQLAlchemy.
 
@@ -29,6 +29,8 @@ See the full list of [included](https://docs.sqlalchemy.org/en/20/dialects/) and
 
 - VS Code 1.110.0 or higher
 - Python 3.9 or higher
+
+> **Note:** On first activation, if no Python installation is detected, SQL4ALL will prompt you to select a Python executable. You can also configure it at any time via the status bar or the command **SQL4ALL: Select Python Executable**.
 
 ### Python Dependencies
 
