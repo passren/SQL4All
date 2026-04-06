@@ -181,7 +181,15 @@ class PersistentPythonProcess {
 
   kill(): void {
     if (this.child && !this.dead) {
-      this.child.kill();
+      // Send shutdown command so Python can close connections cleanly
+      try {
+        this.child.stdin?.write(JSON.stringify({ action: "shutdown" }) + "\n", "utf-8");
+      } catch { /* ignore write errors */ }
+      // Force kill after a grace period
+      const child = this.child;
+      setTimeout(() => {
+        try { child.kill(); } catch { /* ignore */ }
+      }, 3000);
       this.dead = true;
     }
     persistentProcesses.delete(this.connectionName);

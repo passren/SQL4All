@@ -226,12 +226,12 @@ ENTITY_ACTIONS = {
 }
 
 
-def action_list_entities(engine, action):
+def action_list_entities(engine, action, conn=None):
     """List entity names via SQLAlchemy inspect."""
     method_name, col_name, label = ENTITY_ACTIONS[action]
     try:
         from sqlalchemy import inspect as sa_inspect
-        inspector = sa_inspect(engine)
+        inspector = sa_inspect(conn if conn is not None else engine)
         method = getattr(inspector, method_name)
         try:
             names = method()
@@ -254,11 +254,14 @@ def action_list_entities(engine, action):
         ) from e
 
 
-def action_query(engine, sql_query, query_params):
+def action_query(engine, sql_query, query_params, conn=None):
     """Execute a SQL query and return results."""
     try:
         from sqlalchemy import text
-        with engine.connect() as conn:
+        own_conn = conn is None
+        if own_conn:
+            conn = engine.connect()
+        try:
             stmt = text(sql_query)
             if isinstance(query_params, dict):
                 result = conn.execute(stmt, query_params)
@@ -294,26 +297,35 @@ def action_query(engine, sql_query, query_params):
                     "Statement executed successfully"
                 ),
             }
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            if own_conn:
+                conn.close()
     except Exception as e:
         raise Exception(
             f"Query execution failed: {e}"
         ) from e
 
 
-def dispatch_action(engine, action, query='', params_raw=''):
+def dispatch_action(engine, action, query='', params_raw='', conn=None):
     """Route an action to the appropriate handler and log the result."""
     logger.debug('Action: %s', action)
 
     if action == 'ping':
         result = action_ping(engine)
     elif action in ENTITY_ACTIONS:
-        result = action_list_entities(engine, action)
+        result = action_list_entities(engine, action, conn)
     elif action == 'query':
         if not query or not query.strip():
             raise ValueError('Query is empty.')
         logger.debug('Query: %s', query)
         params = parse_query_params(params_raw)
-        result = action_query(engine, query, params)
+        result = action_query(engine, query, params, conn)
     else:
         raise ValueError(f"Unknown action: {action}")
 
@@ -367,6 +379,7 @@ def write_response(response):
 def server_loop(args):
     """Run as a persistent process, reading JSON commands from stdin."""
     engine = None
+    conn = None
     try:
         masked = _mask_password(args.connection_string)
         logger.debug(
@@ -376,6 +389,7 @@ def server_loop(args):
         log_env_vars(args.env_vars)
 
         engine = create_engine(args.connection_string)
+        conn = engine.connect()
         write_response({"kind": "ready"})
 
         for line in sys.stdin:
@@ -406,6 +420,7 @@ def server_loop(args):
                     action,
                     request.get('query', ''),
                     request.get('params', ''),
+                    conn,
                 )
                 write_response(result)
             except Exception as e:
@@ -423,6 +438,11 @@ def server_loop(args):
         write_response({"error": str(e)})
         return 1
     finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
         dispose_engine(engine)
 
     logger.debug('Server mode exited')
