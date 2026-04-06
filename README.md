@@ -6,7 +6,7 @@
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/sql4all.sql4all)](https://marketplace.visualstudio.com/items?itemName=sql4all.sql4all)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.9-yellow?logo=python)](https://www.python.org/downloads/)
 
-A powerful VS Code extension for querying SQL and NoSQL databases using standard SQL syntax. Write SQL queries and execute them against various supported database engines — powered by SQLAlchemy.
+A powerful VS Code extension for querying SQL and NoSQL databases using standard SQL syntax. Write SQL queries and execute them against various supported database engines — backed by SQLAlchemy.
 
 ![SQL4ALL Demo](media/screenshots/demo.gif)
 

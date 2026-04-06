@@ -17,6 +17,10 @@ import {
   INSTALLED_DRIVERS_STORE_KEY,
   NEW_CONNECTION,
   TABLE_ITEM_CONTEXT,
+  FOLDER_ITEM_CONTEXT,
+  FOLDER_STORE_KEY,
+  FOLDER_ASSIGNMENTS_KEY,
+  DEFAULT_FOLDER_NAME,
 } from "./types";
 import {
   ConnectionManagerServices,
@@ -39,12 +43,27 @@ let pythonEnvPath: string | undefined;
 let pythonSetupPromise: Promise<string> | undefined;
 let pythonStatusBar: vscode.StatusBarItem | undefined;
 
-type TreeItem = ConnectionItem | TableItem;
+type TreeItem = FolderItem | ConnectionItem | TableItem;
+
+const CONNECTION_DRAG_MIME = `application/vnd.code.tree.${CONNECTION_VIEW_ID}`;
+
+class FolderItem extends vscode.TreeItem {
+  constructor(
+    public readonly folderName: string,
+  ) {
+    super(folderName, vscode.TreeItemCollapsibleState.Expanded);
+    this.contextValue = FOLDER_ITEM_CONTEXT;
+    this.iconPath = new vscode.ThemeIcon("folder");
+  }
+}
 
 class ConnectionItem extends vscode.TreeItem {
+  public parentFolderName: string;
+
   constructor(
     public readonly connectionName: string,
     public readonly connection: DbConnection,
+    folderName: string,
     iconPath?: vscode.ThemeIcon | vscode.Uri,
     summary?: string,
   ) {
@@ -52,6 +71,7 @@ class ConnectionItem extends vscode.TreeItem {
       connectionName,
       vscode.TreeItemCollapsibleState.Collapsed,
     );
+    this.parentFolderName = folderName;
     const resolvedSummary = summary ?? formatConnectionSummary(connection);
     this.description = "";
     this.tooltip = this.buildTooltip(connectionName, resolvedSummary, connection);
@@ -102,7 +122,12 @@ class TableItem extends vscode.TreeItem {
   }
 }
 
-class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
+class ConnectionTreeProvider
+  implements vscode.TreeDataProvider<TreeItem>, vscode.TreeDragAndDropController<TreeItem> {
+
+  dropMimeTypes = [CONNECTION_DRAG_MIME];
+  dragMimeTypes = [CONNECTION_DRAG_MIME];
+
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<
     TreeItem | undefined | null | void
   >();
@@ -112,7 +137,8 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
   private readonly iconsByDbType = new Map<string, vscode.Uri>();
   private readonly disconnectedIconsByDbType = new Map<string, vscode.Uri>();
   private readonly connectedConnections = new Set<string>();
-  private cachedItems: ConnectionItem[] = [];
+  private cachedFolders: FolderItem[] = [];
+  private cachedItemsByFolder = new Map<string, ConnectionItem[]>();
   private tableCache = new Map<string, TableItem[]>();
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -120,7 +146,8 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
   }
 
   refresh(): void {
-    this.cachedItems = [];
+    this.cachedFolders = [];
+    this.cachedItemsByFolder.clear();
     this.tableCache.clear();
     this._onDidChangeTreeData.fire();
   }
@@ -131,19 +158,35 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 
   async getChildren(element?: TreeItem): Promise<TreeItem[]> {
     if (!element) {
-      if (this.cachedItems.length > 0) {
-        return this.cachedItems;
+      if (this.cachedFolders.length > 0) {
+        return this.cachedFolders;
       }
 
+      const folders = this.getFolders();
+      const assignments = this.getFolderAssignments();
       const connections = this.getConnections();
-      this.cachedItems = Object.keys(connections)
-        .sort((a, b) => a.localeCompare(b))
-        .map((name) => {
+
+      // Ensure every connection has a folder assignment
+      for (const name of Object.keys(connections)) {
+        if (!assignments[name] || !folders.includes(assignments[name])) {
+          assignments[name] = DEFAULT_FOLDER_NAME;
+        }
+      }
+
+      this.cachedFolders = folders.map((f) => new FolderItem(f));
+
+      for (const folderName of folders) {
+        const connNames = Object.keys(connections)
+          .filter((n) => assignments[n] === folderName)
+          .sort((a, b) => a.localeCompare(b));
+
+        const items = connNames.map((name) => {
           const connection = connections[name];
           const connected = this.connectedConnections.has(name);
           const item = new ConnectionItem(
             name,
             connection,
+            folderName,
             this.resolveConnectionIcon(connection, name),
             this.resolveConnectionSummary(connection),
           );
@@ -153,7 +196,14 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
           }
           return item;
         });
-      return this.cachedItems;
+        this.cachedItemsByFolder.set(folderName, items);
+      }
+
+      return this.cachedFolders;
+    }
+
+    if (element instanceof FolderItem) {
+      return this.cachedItemsByFolder.get(element.folderName) ?? [];
     }
 
     if (element instanceof ConnectionItem) {
@@ -165,15 +215,28 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 
   getParent(element: TreeItem): vscode.ProviderResult<TreeItem> {
     if (element instanceof TableItem) {
-      return this.cachedItems.find(
-        (item) => item.connectionName === element.parentConnectionName,
+      for (const items of this.cachedItemsByFolder.values()) {
+        const found = items.find(
+          (item) => item.connectionName === element.parentConnectionName,
+        );
+        if (found) { return found; }
+      }
+      return undefined;
+    }
+    if (element instanceof ConnectionItem) {
+      return this.cachedFolders.find(
+        (f) => f.folderName === element.parentFolderName,
       );
     }
     return undefined;
   }
 
   findItem(connectionName: string): ConnectionItem | undefined {
-    return this.cachedItems.find((item) => item.connectionName === connectionName);
+    for (const items of this.cachedItemsByFolder.values()) {
+      const found = items.find((item) => item.connectionName === connectionName);
+      if (found) { return found; }
+    }
+    return undefined;
   }
 
   hasTablesCached(connectionName: string): boolean {
@@ -456,14 +519,150 @@ ${innerContent}
     connection: DbConnection,
   ): Promise<void> {
     const connections = this.getConnections();
+    const isNew = !connections[name];
     connections[name] = normalizeConnection(connection);
     await this.saveConnections(connections);
+    // Auto-assign new connections to Default folder
+    if (isNew) {
+      const assignments = this.getFolderAssignments();
+      if (!assignments[name]) {
+        assignments[name] = DEFAULT_FOLDER_NAME;
+        await this.saveFolderAssignments(assignments);
+      }
+    }
   }
 
   async deleteConnection(name: string): Promise<void> {
     const connections = this.getConnections();
     delete connections[name];
     await this.saveConnections(connections);
+    // Clean up folder assignment
+    const assignments = this.getFolderAssignments();
+    delete assignments[name];
+    await this.saveFolderAssignments(assignments);
+  }
+
+  // ── Folder storage ──
+
+  getFolders(): string[] {
+    const stored = this.context.globalState.get<string[]>(FOLDER_STORE_KEY);
+    if (!stored || stored.length === 0) {
+      return [DEFAULT_FOLDER_NAME];
+    }
+    return stored;
+  }
+
+  async saveFolders(folders: string[]): Promise<void> {
+    await this.context.globalState.update(FOLDER_STORE_KEY, folders);
+  }
+
+  getFolderAssignments(): Record<string, string> {
+    const stored = this.context.globalState.get<Record<string, string>>(FOLDER_ASSIGNMENTS_KEY);
+    return stored ?? {};
+  }
+
+  async saveFolderAssignments(assignments: Record<string, string>): Promise<void> {
+    await this.context.globalState.update(FOLDER_ASSIGNMENTS_KEY, assignments);
+  }
+
+  async createFolder(folderName: string): Promise<void> {
+    const folders = this.getFolders();
+    if (folders.includes(folderName)) {
+      return;
+    }
+    folders.push(folderName);
+    await this.saveFolders(folders);
+    this.refresh();
+  }
+
+  async renameFolder(oldName: string, newName: string): Promise<void> {
+    const folders = this.getFolders();
+    const idx = folders.indexOf(oldName);
+    if (idx < 0) { return; }
+    folders[idx] = newName;
+    await this.saveFolders(folders);
+    // Re-assign connections
+    const assignments = this.getFolderAssignments();
+    for (const [connName, folder] of Object.entries(assignments)) {
+      if (folder === oldName) {
+        assignments[connName] = newName;
+      }
+    }
+    await this.saveFolderAssignments(assignments);
+    this.refresh();
+  }
+
+  async deleteFolder(folderName: string): Promise<void> {
+    if (folderName === DEFAULT_FOLDER_NAME) { return; }
+    const folders = this.getFolders();
+    const idx = folders.indexOf(folderName);
+    if (idx < 0) { return; }
+    folders.splice(idx, 1);
+    await this.saveFolders(folders);
+    // Move connections in this folder to Default
+    const assignments = this.getFolderAssignments();
+    for (const [connName, folder] of Object.entries(assignments)) {
+      if (folder === folderName) {
+        assignments[connName] = DEFAULT_FOLDER_NAME;
+      }
+    }
+    await this.saveFolderAssignments(assignments);
+    this.refresh();
+  }
+
+  async moveConnectionToFolder(connectionName: string, folderName: string): Promise<void> {
+    const assignments = this.getFolderAssignments();
+    assignments[connectionName] = folderName;
+    await this.saveFolderAssignments(assignments);
+    this.refresh();
+  }
+
+  findFolder(folderName: string): FolderItem | undefined {
+    return this.cachedFolders.find((f) => f.folderName === folderName);
+  }
+
+  // ── Drag and Drop ──
+
+  handleDrag(
+    source: readonly TreeItem[],
+    dataTransfer: vscode.DataTransfer,
+    _token: vscode.CancellationToken,
+  ): void {
+    const connectionItems = source.filter(
+      (item): item is ConnectionItem => item instanceof ConnectionItem,
+    );
+    if (connectionItems.length === 0) { return; }
+    dataTransfer.set(
+      CONNECTION_DRAG_MIME,
+      new vscode.DataTransferItem(connectionItems.map((c) => c.connectionName)),
+    );
+  }
+
+  async handleDrop(
+    target: TreeItem | undefined,
+    dataTransfer: vscode.DataTransfer,
+    _token: vscode.CancellationToken,
+  ): Promise<void> {
+    const transferItem = dataTransfer.get(CONNECTION_DRAG_MIME);
+    if (!transferItem) { return; }
+
+    const connectionNames = transferItem.value as string[];
+    if (!Array.isArray(connectionNames) || connectionNames.length === 0) { return; }
+
+    let targetFolder: string | undefined;
+    if (target instanceof FolderItem) {
+      targetFolder = target.folderName;
+    } else if (target instanceof ConnectionItem) {
+      targetFolder = target.parentFolderName;
+    }
+    if (!targetFolder) { return; }
+
+    const assignments = this.getFolderAssignments();
+    for (const name of connectionNames) {
+      assignments[name] = targetFolder;
+    }
+    await this.saveFolderAssignments(assignments);
+    this.refresh();
   }
 }
 
@@ -475,6 +674,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   connectionTreeView = vscode.window.createTreeView(CONNECTION_VIEW_ID, {
     treeDataProvider: connectionTreeProvider,
+    dragAndDropController: connectionTreeProvider,
   });
   context.subscriptions.push(connectionTreeView);
 
@@ -600,6 +800,38 @@ export function activate(context: vscode.ExtensionContext) {
       if (panel) {
         panel.dispose();
       }
+    },
+  );
+
+  const cloneConnectionDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.cloneConnection`,
+    async (item?: ConnectionItem) => {
+      if (!item) {
+        return;
+      }
+
+      const connections = connectionTreeProvider.getConnections();
+      const baseName = item.connectionName;
+      let clonedName: string;
+      do {
+        clonedName = `${baseName}_${generateRandomSuffix()}`;
+      } while (connections[clonedName]);
+
+      await connectionTreeProvider.upsertConnection(
+        clonedName,
+        normalizeConnection(item.connection),
+      );
+
+      // Place clone in the same folder as source
+      await connectionTreeProvider.moveConnectionToFolder(
+        clonedName,
+        item.parentFolderName,
+      );
+
+      revealConnectionInTree(connectionTreeProvider, clonedName);
+      vscode.window.showInformationMessage(
+        `Connection cloned as "${clonedName}".`,
+      );
     },
   );
 
@@ -745,6 +977,65 @@ export function activate(context: vscode.ExtensionContext) {
     () => importConnections(connectionTreeProvider),
   );
 
+  const createFolderDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.createFolder`,
+    async () => {
+      const name = await vscode.window.showInputBox({
+        prompt: "Enter folder name",
+        placeHolder: "Folder name",
+        validateInput: (value) => {
+          const trimmed = value.trim();
+          if (!trimmed) { return "Folder name cannot be empty."; }
+          if (connectionTreeProvider.getFolders().includes(trimmed)) {
+            return `Folder "${trimmed}" already exists.`;
+          }
+          return undefined;
+        },
+      });
+      if (!name) { return; }
+      await connectionTreeProvider.createFolder(name.trim());
+    },
+  );
+
+  const renameFolderDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.renameFolder`,
+    async (item?: FolderItem) => {
+      if (!item) { return; }
+      const newName = await vscode.window.showInputBox({
+        prompt: `Rename folder "${item.folderName}"`,
+        value: item.folderName,
+        validateInput: (value) => {
+          const trimmed = value.trim();
+          if (!trimmed) { return "Folder name cannot be empty."; }
+          if (trimmed !== item.folderName && connectionTreeProvider.getFolders().includes(trimmed)) {
+            return `Folder "${trimmed}" already exists.`;
+          }
+          return undefined;
+        },
+      });
+      if (!newName || newName.trim() === item.folderName) { return; }
+      await connectionTreeProvider.renameFolder(item.folderName, newName.trim());
+    },
+  );
+
+  const deleteFolderDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.deleteFolder`,
+    async (item?: FolderItem) => {
+      if (!item) { return; }
+      if (item.folderName === DEFAULT_FOLDER_NAME) {
+        vscode.window.showWarningMessage("The Default folder cannot be deleted.");
+        return;
+      }
+      const answer = await vscode.window.showWarningMessage(
+        `Delete folder "${item.folderName}"? Connections will be moved to "${DEFAULT_FOLDER_NAME}".`,
+        { modal: true },
+        "Delete",
+      );
+      if (answer !== "Delete") { return; }
+      await connectionTreeProvider.deleteFolder(item.folderName);
+    },
+  );
+
   const statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100,
@@ -759,6 +1050,7 @@ export function activate(context: vscode.ExtensionContext) {
     connectConnectionDisposable,
     editConnectionDisposable,
     deleteConnectionDisposable,
+    cloneConnectionDisposable,
     copyTableNameDisposable,
     connectDatabaseDisposable,
     disconnectDatabaseDisposable,
@@ -767,6 +1059,9 @@ export function activate(context: vscode.ExtensionContext) {
     selectPythonExecutableDisposable,
     exportConnectionsDisposable,
     importConnectionsDisposable,
+    createFolderDisposable,
+    renameFolderDisposable,
+    deleteFolderDisposable,
     statusBar,
   );
 
@@ -785,10 +1080,20 @@ async function exportConnections(provider: ConnectionTreeProvider): Promise<void
     return;
   }
 
-  const picks = names.map((name) => ({
-    label: name,
-    picked: true,
-  }));
+  const assignments = provider.getFolderAssignments();
+  const folders = provider.getFolders();
+
+  const picks = names
+    .map((name) => ({
+      label: `${assignments[name] || DEFAULT_FOLDER_NAME} \\ ${name}`,
+      picked: true,
+      connectionName: name,
+      folderIndex: folders.indexOf(assignments[name] || DEFAULT_FOLDER_NAME),
+    }))
+    .sort((a, b) => {
+      if (a.folderIndex !== b.folderIndex) { return a.folderIndex - b.folderIndex; }
+      return a.connectionName.localeCompare(b.connectionName);
+    });
 
   const selected = await vscode.window.showQuickPick(picks, {
     canPickMany: true,
@@ -810,10 +1115,16 @@ async function exportConnections(provider: ConnectionTreeProvider): Promise<void
     return;
   }
 
-  const exportData: ConnectionStore = {};
+  const exportData: Record<string, unknown> = {};
+  const folderAssignments: Record<string, string> = {};
   for (const item of selected) {
-    exportData[item.label] = connections[item.label];
+    const name = (item as any).connectionName as string;
+    exportData[name] = connections[name];
+    if (assignments[name]) {
+      folderAssignments[name] = assignments[name];
+    }
   }
+  exportData.__folderAssignments__ = folderAssignments;
 
   const content = JSON.stringify(exportData, null, 2);
   await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
@@ -822,13 +1133,8 @@ async function exportConnections(provider: ConnectionTreeProvider): Promise<void
   );
 }
 
-function generateRandomSuffix(length: number = 4): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+function generateRandomSuffix(length: number = 6): string {
+  return Math.random().toString(36).substring(2, 2 + length);
 }
 
 async function importConnections(provider: ConnectionTreeProvider): Promise<void> {
@@ -859,9 +1165,15 @@ async function importConnections(provider: ConnectionTreeProvider): Promise<void
   }
 
   const existingConnections = provider.getConnections();
+  const importedFolderAssignments: Record<string, string> =
+    (rawData.__folderAssignments__ && typeof rawData.__folderAssignments__ === "object"
+      && !Array.isArray(rawData.__folderAssignments__))
+      ? rawData.__folderAssignments__ as Record<string, string>
+      : {};
   let importedCount = 0;
 
   for (const [name, rawConn] of Object.entries(rawData)) {
+    if (name === "__folderAssignments__") { continue; }
     const connection = normalizeConnection(rawConn);
     let finalName = name;
 
@@ -889,6 +1201,25 @@ async function importConnections(provider: ConnectionTreeProvider): Promise<void
 
   if (importedCount > 0) {
     await provider.saveConnections(existingConnections);
+    // Restore folder assignments from export data, or default
+    const assignments = provider.getFolderAssignments();
+    const folders = provider.getFolders();
+    for (const name of Object.keys(existingConnections)) {
+      if (!assignments[name]) {
+        const exportedFolder = importedFolderAssignments[name];
+        if (exportedFolder) {
+          // Ensure the folder exists
+          if (!folders.includes(exportedFolder)) {
+            folders.push(exportedFolder);
+          }
+          assignments[name] = exportedFolder;
+        } else {
+          assignments[name] = DEFAULT_FOLDER_NAME;
+        }
+      }
+    }
+    await provider.saveFolders(folders);
+    await provider.saveFolderAssignments(assignments);
     vscode.window.showInformationMessage(
       `Imported ${importedCount} connection(s) successfully.`,
     );

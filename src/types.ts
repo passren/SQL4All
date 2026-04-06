@@ -116,3 +116,7 @@ export const RECENT_FILES_STORE_KEY = `${EXTENSION_NAMESPACE}.recentFiles`;
 export const LINKED_FILES_STORE_KEY = `${EXTENSION_NAMESPACE}.linkedFiles`;
 export const NEW_CONNECTION = "__NEW_CONNECTION__";
 export const TABLE_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.tableItem`;
+export const FOLDER_ITEM_CONTEXT = `${EXTENSION_NAMESPACE}.folderItem`;
+export const FOLDER_STORE_KEY = `${EXTENSION_NAMESPACE}.connectionFolders`;
+export const FOLDER_ASSIGNMENTS_KEY = `${EXTENSION_NAMESPACE}.folderAssignments`;
+export const DEFAULT_FOLDER_NAME = "Default";
