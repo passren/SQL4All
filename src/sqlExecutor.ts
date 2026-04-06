@@ -167,7 +167,7 @@ class PersistentPythonProcess {
       this.pendingReject = reject;
 
       const payload = JSON.stringify(request) + "\n";
-      this.child!.stdin!.write(payload);
+      this.child!.stdin!.write(payload, "utf-8");
     });
   }
 

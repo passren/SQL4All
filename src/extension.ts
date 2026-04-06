@@ -1708,9 +1708,8 @@ function getWindowsCandidatePythonPaths(): string[] {
 async function runProcess(command: string, args: string[], onSpawn?: (child: ChildProcess) => void, envVars?: Record<string, string>): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const spawnOptions: any = {};
-    if (envVars && Object.keys(envVars).length > 0) {
-      spawnOptions.env = { ...process.env, ...envVars };
-    }
+    const mergedEnv = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", ...envVars };
+    spawnOptions.env = mergedEnv;
     const child = spawn(command, args, spawnOptions);
     if (onSpawn) {
       onSpawn(child);

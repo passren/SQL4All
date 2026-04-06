@@ -211,6 +211,155 @@ function renderPlaceholder(message, type = "neutral") {
   container.appendChild(emptyState);
 }
 
+function showRowDetailModal(row, columns, rowIndex) {
+  const utils = window.SQL4ALLExecutorUtils;
+
+  // Remove any existing modal
+  const existing = document.querySelector(".row-detail-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "row-detail-overlay";
+
+  const modal = document.createElement("div");
+  modal.className = "row-detail-modal";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "row-detail-header";
+  const title = document.createElement("span");
+  title.className = "row-detail-title";
+  title.textContent = `Row #${rowIndex + 1}`;
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "row-detail-close";
+  closeBtn.textContent = "\u00d7";
+  closeBtn.title = "Close (Esc)";
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+  modal.appendChild(header);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "row-detail-body";
+
+  columns.forEach((col) => {
+    const field = document.createElement("div");
+    field.className = "row-detail-field";
+
+    const label = document.createElement("div");
+    label.className = "row-detail-label";
+    label.textContent = col;
+    label.title = col;
+
+    const valueWrap = document.createElement("div");
+    valueWrap.className = "row-detail-value-wrap";
+
+    const formatted = utils.formatCellValue(row[col]);
+    const rawValue = formatted.title || formatted.text;
+
+    const valueEl = document.createElement("div");
+    valueEl.className = "row-detail-value";
+    if (formatted.className) valueEl.classList.add(formatted.className);
+    valueEl.textContent = typeof row[col] === "object" && row[col] !== null
+      ? JSON.stringify(row[col], null, 2)
+      : formatted.text;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "row-detail-copy-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.title = "Copy value";
+    copyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(rawValue).then(() => {
+        copyBtn.textContent = "\u2713";
+        copyBtn.classList.add("copied");
+        setTimeout(() => {
+          copyBtn.textContent = "Copy";
+          copyBtn.classList.remove("copied");
+        }, 1500);
+      });
+    });
+
+    valueWrap.appendChild(valueEl);
+    valueWrap.appendChild(copyBtn);
+    field.appendChild(label);
+    field.appendChild(valueWrap);
+    body.appendChild(field);
+  });
+
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Close handlers
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  }
+  function onKey(e) {
+    if (e.key === "Escape") close();
+  }
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener("keydown", onKey);
+}
+
+function initColumnResize(table) {
+  // Measure natural column widths before switching to fixed layout
+  const rowNumTh = table.querySelector("thead th.row-number-cell");
+  const headers = table.querySelectorAll("thead th:not(.row-number-cell)");
+
+  const naturalWidths = Array.from(headers).map((th) => th.offsetWidth);
+
+  // Now lock widths and switch to fixed layout
+  if (rowNumTh) {
+    rowNumTh.style.width = "52px";
+  }
+  headers.forEach((th, i) => {
+    th.style.width = naturalWidths[i] + "px";
+  });
+  table.style.tableLayout = "fixed";
+
+  let activeHandle = null;
+  let startX = 0;
+  let startWidth = 0;
+  let activeTh = null;
+
+  function onMouseMove(e) {
+    if (!activeTh) return;
+    const delta = e.clientX - startX;
+    const newWidth = Math.max(40, startWidth + delta);
+    activeTh.style.width = newWidth + "px";
+  }
+
+  function onMouseUp() {
+    if (activeHandle) activeHandle.classList.remove("is-resizing");
+    activeHandle = null;
+    activeTh = null;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
+
+  table.addEventListener("mousedown", (e) => {
+    const handle = e.target.closest(".resize-handle");
+    if (!handle) return;
+    e.preventDefault();
+    activeTh = handle.parentElement;
+    activeHandle = handle;
+    startX = e.clientX;
+    startWidth = activeTh.offsetWidth;
+    handle.classList.add("is-resizing");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  });
+}
+
 function renderResultsTable(payload, elapsedSeconds) {
   const utils = window.SQL4ALLExecutorUtils;
   const container = getResultsContainer();
@@ -255,8 +404,13 @@ function renderResultsTable(payload, elapsedSeconds) {
 
   columns.forEach((column) => {
     const th = document.createElement("th");
-    th.textContent = column;
+    const label = document.createElement("span");
+    label.textContent = column;
+    th.appendChild(label);
     th.title = column;
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "resize-handle";
+    th.appendChild(resizeHandle);
     headerRow.appendChild(th);
   });
 
@@ -286,6 +440,10 @@ function renderResultsTable(payload, elapsedSeconds) {
   }
   rows.forEach((row, index) => {
     const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.addEventListener("dblclick", () => {
+      showRowDetailModal(row, columns, index);
+    });
 
     const rowNumber = document.createElement("td");
     rowNumber.textContent = String(index + 1);
@@ -309,6 +467,8 @@ function renderResultsTable(payload, elapsedSeconds) {
   table.appendChild(tbody);
   container.innerHTML = "";
   container.appendChild(table);
+
+  initColumnResize(table);
 
   setResultMetrics(payload.rowCount, columns.length);
   setExportState(true);
