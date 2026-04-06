@@ -149,9 +149,9 @@
     },
     "sqlserver": {
       "icon": "icons/sqlserver.svg",
-      "driver": "pyodbc",
+      "driver": "pymssql",
       "default_port": 1433,
-      "dialects": ["mssql+pyodbc", "mssql+pymssql", "mssql"],
+      "dialects": ["mssql+pymssql", "mssql+pyodbc", "mssql"],
       "uri_template": "dialect://[username[:password]@]host[:port]/[database][?additionalParameters]"
     },
     "teradata": {

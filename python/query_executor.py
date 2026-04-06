@@ -9,6 +9,8 @@ import json
 import logging
 import argparse
 import subprocess
+import warnings
+
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,13 @@ _log_handler.setFormatter(
 )
 logger.handlers = [_log_handler]
 logger.propagate = False
+
+# Redirect Python warnings to log file instead of stderr
+warnings.simplefilter('always')
+logging.captureWarnings(True)
+_warnings_logger = logging.getLogger('py.warnings')
+_warnings_logger.addHandler(_log_handler)
+_warnings_logger.propagate = False
 
 REQUIREMENTS_PATH = Path(__file__).resolve().parent / 'requirements.txt'
 
@@ -83,7 +92,11 @@ def parse_arguments():
     parser.add_argument(
         '--action',
         default='query',
-        choices=['query', 'list-tables', 'ping'],
+        choices=[
+            'query', 'ping',
+            'list-tables', 'list-views', 'list-materialized-views',
+            'list-sequences', 'list-temp-tables', 'list-temp-views',
+        ],
         help='Action to perform',
     )
     parser.add_argument(
@@ -193,23 +206,51 @@ def action_ping(engine):
         ) from e
 
 
-def action_list_tables(engine):
-    """List table names via SQLAlchemy inspect."""
+ENTITY_ACTIONS = {
+    'list-tables': ('get_table_names', 'table_name', 'table'),
+    'list-views': ('get_view_names', 'view_name', 'view'),
+    'list-materialized-views': (
+        'get_materialized_view_names',
+        'materialized_view_name',
+        'materialized view',
+    ),
+    'list-sequences': (
+        'get_sequence_names', 'sequence_name', 'sequence',
+    ),
+    'list-temp-tables': (
+        'get_temp_table_names', 'temp_table_name', 'temp table',
+    ),
+    'list-temp-views': (
+        'get_temp_view_names', 'temp_view_name', 'temp view',
+    ),
+}
+
+
+def action_list_entities(engine, action):
+    """List entity names via SQLAlchemy inspect."""
+    method_name, col_name, label = ENTITY_ACTIONS[action]
     try:
         from sqlalchemy import inspect as sa_inspect
         inspector = sa_inspect(engine)
-        tables = inspector.get_table_names()
-        rows = [{"table_name": t} for t in tables]
+        method = getattr(inspector, method_name)
+        try:
+            names = method()
+        except NotImplementedError:
+            logger.debug(
+                '%s not supported by this dialect', action,
+            )
+            names = []
+        rows = [{col_name: n} for n in names]
         return {
             "kind": "result-set",
             "rows": rows,
-            "columns": ["table_name"],
-            "rowCount": len(tables),
-            "message": f"Found {len(tables)} table(s)",
+            "columns": [col_name],
+            "rowCount": len(names),
+            "message": f"Found {len(names)} {label}(s)",
         }
     except Exception as e:
         raise Exception(
-            f"Failed to list tables: {e}"
+            f"Failed to list {label}s: {e}"
         ) from e
 
 
@@ -265,8 +306,8 @@ def dispatch_action(engine, action, query='', params_raw=''):
 
     if action == 'ping':
         result = action_ping(engine)
-    elif action == 'list-tables':
-        result = action_list_tables(engine)
+    elif action in ENTITY_ACTIONS:
+        result = action_list_entities(engine, action)
     elif action == 'query':
         if not query or not query.strip():
             raise ValueError('Query is empty.')

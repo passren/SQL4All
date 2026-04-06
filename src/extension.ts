@@ -17,6 +17,7 @@ import {
   INSTALLED_DRIVERS_STORE_KEY,
   NEW_CONNECTION,
   TABLE_ITEM_CONTEXT,
+  CATEGORY_ITEM_CONTEXT,
   FOLDER_ITEM_CONTEXT,
   FOLDER_STORE_KEY,
   FOLDER_ASSIGNMENTS_KEY,
@@ -43,9 +44,20 @@ let pythonEnvPath: string | undefined;
 let pythonSetupPromise: Promise<string> | undefined;
 let pythonStatusBar: vscode.StatusBarItem | undefined;
 
-type TreeItem = FolderItem | ConnectionItem | TableItem;
+type TreeItem = FolderItem | ConnectionItem | EntityCategoryItem | EntityItem;
 
 const CONNECTION_DRAG_MIME = `application/vnd.code.tree.${CONNECTION_VIEW_ID}`;
+
+type EntityCategory = "tables" | "views" | "materialized-views" | "sequences" | "temp-tables" | "temp-views";
+
+const ENTITY_CATEGORIES: { type: EntityCategory; label: string; icon: string; action: string }[] = [
+  { type: "tables", label: "Tables", icon: "symbol-class", action: "list-tables" },
+  { type: "views", label: "Views", icon: "eye", action: "list-views" },
+  { type: "materialized-views", label: "Materialized Views", icon: "symbol-interface", action: "list-materialized-views" },
+  { type: "sequences", label: "Sequences", icon: "list-ordered", action: "list-sequences" },
+  { type: "temp-tables", label: "Temp Tables", icon: "symbol-event", action: "list-temp-tables" },
+  { type: "temp-views", label: "Temp Views", icon: "symbol-event", action: "list-temp-views" },
+];
 
 class FolderItem extends vscode.TreeItem {
   constructor(
@@ -59,6 +71,7 @@ class FolderItem extends vscode.TreeItem {
 
 class ConnectionItem extends vscode.TreeItem {
   public parentFolderName: string;
+  public readonly _summary: string;
 
   constructor(
     public readonly connectionName: string,
@@ -72,9 +85,8 @@ class ConnectionItem extends vscode.TreeItem {
       vscode.TreeItemCollapsibleState.Collapsed,
     );
     this.parentFolderName = folderName;
-    const resolvedSummary = summary ?? formatConnectionSummary(connection);
+    this._summary = summary ?? formatConnectionSummary(connection);
     this.description = "";
-    this.tooltip = this.buildTooltip(connectionName, resolvedSummary, connection);
     this.contextValue = CONNECTION_ITEM_CONTEXT;
     this.iconPath = iconPath ?? new vscode.ThemeIcon("database");
   }
@@ -84,39 +96,30 @@ class ConnectionItem extends vscode.TreeItem {
       ? `${CONNECTION_ITEM_CONTEXT}.connected`
       : CONNECTION_ITEM_CONTEXT;
   }
+}
 
-  private buildTooltip(
-    name: string,
-    summary: string,
-    connection: DbConnection,
-  ): vscode.MarkdownString {
-    const md = new vscode.MarkdownString();
-    md.supportHtml = true;
-
-    const safeName = name.replace(/([*_\\`])/g, "\\$1");
-    const tick = (s: string) => s.replace(/`/g, "'");
-
-    md.appendMarkdown(`**${safeName}**\n\n`);
-    md.appendMarkdown(`<span style="color:#4EC9B0;">\`${tick(summary)}\`</span>\n\n`);
-
-    const envVars = connection.envVars;
-    if (envVars && Object.keys(envVars).length > 0) {
-      md.appendMarkdown(`***Environment Variables:***\n\n`);
-      for (const [key, value] of Object.entries(envVars)) {
-        md.appendMarkdown(`- \`${tick(key)}\` = \`${tick(value)}\`\n`);
-      }
-    }
-
-    return md;
+class EntityCategoryItem extends vscode.TreeItem {
+  constructor(
+    public readonly categoryType: EntityCategory,
+    public readonly parentConnectionName: string,
+    public readonly parentConnection: DbConnection,
+    label: string,
+    icon: string,
+    public readonly action: string,
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.Collapsed);
+    this.contextValue = CATEGORY_ITEM_CONTEXT;
+    this.iconPath = new vscode.ThemeIcon(icon);
   }
 }
 
-class TableItem extends vscode.TreeItem {
+class EntityItem extends vscode.TreeItem {
   constructor(
-    public readonly tableName: string,
+    public readonly entityName: string,
     public readonly parentConnectionName: string,
+    public readonly categoryType: EntityCategory,
   ) {
-    super(tableName, vscode.TreeItemCollapsibleState.None);
+    super(entityName, vscode.TreeItemCollapsibleState.None);
     this.contextValue = TABLE_ITEM_CONTEXT;
     this.iconPath = new vscode.ThemeIcon("symbol-field");
   }
@@ -139,7 +142,9 @@ class ConnectionTreeProvider
   private readonly connectedConnections = new Set<string>();
   private cachedFolders: FolderItem[] = [];
   private cachedItemsByFolder = new Map<string, ConnectionItem[]>();
-  private tableCache = new Map<string, TableItem[]>();
+  private entityCache = new Map<string, EntityItem[]>();
+  private categoriesByConnection = new Map<string, EntityCategoryItem[]>();
+  private cachedConnections: ConnectionStore | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.loadDriverIconMap();
@@ -148,12 +153,37 @@ class ConnectionTreeProvider
   refresh(): void {
     this.cachedFolders = [];
     this.cachedItemsByFolder.clear();
-    this.tableCache.clear();
+    this.entityCache.clear();
+    this.categoriesByConnection.clear();
+    this.cachedConnections = undefined;
     this._onDidChangeTreeData.fire();
   }
 
   getTreeItem(element: TreeItem): vscode.TreeItem {
     return element;
+  }
+
+  resolveTreeItem(
+    item: vscode.TreeItem,
+    element: TreeItem,
+  ): vscode.ProviderResult<vscode.TreeItem> {
+    if (element instanceof ConnectionItem && !item.tooltip) {
+      const md = new vscode.MarkdownString();
+      md.supportHtml = true;
+      const safeName = element.connectionName.replace(/([*_\\`])/g, "\\$1");
+      const tick = (s: string) => s.replace(/`/g, "'");
+      md.appendMarkdown(`**${safeName}**\n\n`);
+      md.appendMarkdown(`<span style="color:#4EC9B0;">\`${tick(element._summary)}\`</span>\n\n`);
+      const envVars = element.connection.envVars;
+      if (envVars && Object.keys(envVars).length > 0) {
+        md.appendMarkdown(`***Environment Variables:***\n\n`);
+        for (const [key, value] of Object.entries(envVars)) {
+          md.appendMarkdown(`- \`${tick(key)}\` = \`${tick(value)}\`\n`);
+        }
+      }
+      item.tooltip = md;
+    }
+    return item;
   }
 
   async getChildren(element?: TreeItem): Promise<TreeItem[]> {
@@ -163,22 +193,30 @@ class ConnectionTreeProvider
       }
 
       const folders = this.getFolders();
+      const folderSet = new Set(folders);
       const assignments = this.getFolderAssignments();
       const connections = this.getConnections();
 
-      // Ensure every connection has a folder assignment
+      // Group connections by folder in a single pass
+      const groups = new Map<string, string[]>();
+      for (const folderName of folders) {
+        groups.set(folderName, []);
+      }
+
       for (const name of Object.keys(connections)) {
-        if (!assignments[name] || !folders.includes(assignments[name])) {
-          assignments[name] = DEFAULT_FOLDER_NAME;
+        let folder = assignments[name];
+        if (!folder || !folderSet.has(folder)) {
+          folder = DEFAULT_FOLDER_NAME;
+          assignments[name] = folder;
         }
+        groups.get(folder)!.push(name);
       }
 
       this.cachedFolders = folders.map((f) => new FolderItem(f));
 
       for (const folderName of folders) {
-        const connNames = Object.keys(connections)
-          .filter((n) => assignments[n] === folderName)
-          .sort((a, b) => a.localeCompare(b));
+        const connNames = groups.get(folderName)!;
+        connNames.sort((a, b) => a.localeCompare(b));
 
         const items = connNames.map((name) => {
           const connection = connections[name];
@@ -207,21 +245,28 @@ class ConnectionTreeProvider
     }
 
     if (element instanceof ConnectionItem) {
-      return this.fetchTableItems(element);
+      if (!this.connectedConnections.has(element.connectionName)) {
+        return [];
+      }
+      return this.getEntityCategories(element);
+    }
+
+    if (element instanceof EntityCategoryItem) {
+      return this.fetchEntityItems(element);
     }
 
     return [];
   }
 
   getParent(element: TreeItem): vscode.ProviderResult<TreeItem> {
-    if (element instanceof TableItem) {
-      for (const items of this.cachedItemsByFolder.values()) {
-        const found = items.find(
-          (item) => item.connectionName === element.parentConnectionName,
-        );
-        if (found) { return found; }
-      }
-      return undefined;
+    if (element instanceof EntityItem) {
+      const categories = this.categoriesByConnection.get(element.parentConnectionName);
+      return categories?.find(
+        (c) => c.categoryType === element.categoryType,
+      );
+    }
+    if (element instanceof EntityCategoryItem) {
+      return this.findItem(element.parentConnectionName);
     }
     if (element instanceof ConnectionItem) {
       return this.cachedFolders.find(
@@ -240,7 +285,9 @@ class ConnectionTreeProvider
   }
 
   hasTablesCached(connectionName: string): boolean {
-    return this.tableCache.has(connectionName);
+    return ENTITY_CATEGORIES.some(
+      (cat) => this.entityCache.has(`${connectionName}:${cat.type}`),
+    );
   }
 
   isConnected(connectionName: string): boolean {
@@ -248,18 +295,25 @@ class ConnectionTreeProvider
   }
 
   refreshConnectionTables(connectionName: string): void {
-    this.tableCache.delete(connectionName);
+    this.clearEntityCache(connectionName);
     const target = this.findItem(connectionName);
     this._onDidChangeTreeData.fire(target);
   }
 
   clearTableCache(connectionName: string): void {
-    this.tableCache.delete(connectionName);
+    this.clearEntityCache(connectionName);
   }
 
   disconnectAndRefresh(connectionName: string): void {
-    this.tableCache.delete(connectionName);
+    this.clearEntityCache(connectionName);
     this.setConnectionState(connectionName, false);
+  }
+
+  private clearEntityCache(connectionName: string): void {
+    for (const cat of ENTITY_CATEGORIES) {
+      this.entityCache.delete(`${connectionName}:${cat.type}`);
+    }
+    this.categoriesByConnection.delete(connectionName);
   }
 
   private loadDriverIconMap(): void {
@@ -468,11 +522,23 @@ ${innerContent}
             })
             .filter((name: string) => name.length > 0);
 
-          const items = tableNames.map(
-            (name) => new TableItem(name, connectionName),
+          // Cache tables eagerly, clear lazy caches
+          this.clearEntityCache(connectionName);
+          const tablesKey = `${connectionName}:tables`;
+          const tableItems = tableNames.map(
+            (name) => new EntityItem(name, connectionName, "tables"),
           );
-          this.tableCache.set(connectionName, items);
-          this.setConnectionState(connectionName, true);
+          this.entityCache.set(tablesKey, tableItems);
+
+          // Always refresh the tree item (icon + children) even if already connected
+          this.connectedConnections.add(connectionName);
+          const currentItem = this.findItem(connectionName);
+          if (currentItem) {
+            currentItem.iconPath = this.resolveConnectionIcon(connection, connectionName);
+            currentItem.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+            currentItem.updateContextValue(true);
+          }
+          this._onDidChangeTreeData.fire(currentItem);
           return true;
         } catch (err: any) {
           // Restore previous icon on failure
@@ -489,11 +555,85 @@ ${innerContent}
     );
   }
 
-  private async fetchTableItems(parent: ConnectionItem): Promise<TableItem[]> {
-    return this.tableCache.get(parent.connectionName) ?? [];
+  private getEntityCategories(parent: ConnectionItem): EntityCategoryItem[] {
+    const cached = this.categoriesByConnection.get(parent.connectionName);
+    if (cached) {
+      return cached;
+    }
+
+    const categories = ENTITY_CATEGORIES.map(
+      (cat) =>
+        new EntityCategoryItem(
+          cat.type,
+          parent.connectionName,
+          parent.connection,
+          cat.label,
+          cat.icon,
+          cat.action,
+        ),
+    );
+
+    this.categoriesByConnection.set(parent.connectionName, categories);
+    return categories;
+  }
+
+  private async fetchEntityItems(category: EntityCategoryItem): Promise<EntityItem[]> {
+    const cacheKey = `${category.parentConnectionName}:${category.categoryType}`;
+    const cached = this.entityCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const connection = this.getConnection(category.parentConnectionName);
+      if (!connection) { return []; }
+
+      const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
+      const envVars = connection.envVars;
+      const args = [
+        pythonScript,
+        `--connection-string=${connection.connectionString || ""}`,
+        `--action=${category.action}`,
+      ];
+
+      if (envVars && Object.keys(envVars).length > 0) {
+        args.push(`--env-vars=${JSON.stringify(envVars)}`);
+      }
+
+      const result = await runPythonScript(this.context, args, undefined, envVars);
+      const parsed = JSON.parse(result);
+
+      const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
+      const names: string[] = rows
+        .map((row: any) => {
+          if (typeof row === "string") { return row; }
+          if (typeof row === "object" && row !== null) {
+            const vals = Object.values(row);
+            return vals.length > 0 ? String(vals[0]) : "";
+          }
+          return String(row);
+        })
+        .filter((name: string) => name.length > 0);
+
+      const items = names.map(
+        (name) => new EntityItem(name, category.parentConnectionName, category.categoryType),
+      );
+      this.entityCache.set(cacheKey, items);
+
+      // Update category description with count
+      category.description = `${items.length}`;
+
+      return items;
+    } catch {
+      return [];
+    }
   }
 
   getConnections(): ConnectionStore {
+    if (this.cachedConnections) {
+      return this.cachedConnections;
+    }
+
     const current = this.context.globalState.get(CONNECTION_STORE_KEY);
     const rawConnections = (current as Record<string, unknown> | undefined) ?? {};
 
@@ -502,10 +642,12 @@ ${innerContent}
       normalizedConnections[name] = normalizeConnection(rawConnection);
     }
 
+    this.cachedConnections = normalizedConnections;
     return normalizedConnections;
   }
 
   async saveConnections(connections: ConnectionStore): Promise<void> {
+    this.cachedConnections = undefined;
     await this.context.globalState.update(CONNECTION_STORE_KEY, connections);
     this.refresh();
   }
@@ -837,13 +979,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   const copyTableNameDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.copyTableName`,
-    async (item?: TableItem) => {
-      if (!item?.tableName) {
+    async (item?: EntityItem) => {
+      if (!item?.entityName) {
         return;
       }
-      await vscode.env.clipboard.writeText(item.tableName);
+      await vscode.env.clipboard.writeText(item.entityName);
       vscode.window.setStatusBarMessage(
-        `Copied table name: ${item.tableName}`,
+        `Copied: ${item.entityName}`,
         2000,
       );
     },

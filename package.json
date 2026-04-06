@@ -3,7 +3,7 @@
   "displayName": "SQL For ALL",
   "publisher": "sql4all",
   "description": "Query SQL/NoSQL Databases using SQL — backed by SQLAlchemy",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "license": "MIT",
   "engines": {
     "vscode": "^1.110.0"
@@ -99,7 +99,7 @@
       },
       {
         "command": "sql4all.copyTableName",
-        "title": "Copy Table Name",
+        "title": "Copy Name",
         "category": "SQL4ALL",
         "icon": "$(copy)"
       },

@@ -13,9 +13,11 @@ A powerful VS Code extension for querying SQL and NoSQL databases using standard
 ## Features
 
 - **SQL Query Editor** — A editor with SQL syntax highlighting
-- **Connection Manager** — Save, edit, and manage multiple database connections
+- **Connection Manager** — Save, edit, and manage multiple database connections with folder organization
+- **Import/Export Connections** — Share connection configurations across environments with folder structure preserved
 - **SQL & NoSQL Databases** — PostgreSQL, MySQL, SQLite, MongoDB, Snowflake, BigQuery, and many more
 - **Result Viewer** — View query results in an organized table or JSON format
+- **Row Detail View** — Double-click any row to open a vertical detail modal
 - **Export Results** — Export to CSV or JSON
 - **Auto Driver Install** — The required Python driver for each database is installed automatically on first use
 

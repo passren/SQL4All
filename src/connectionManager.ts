@@ -38,6 +38,10 @@ export interface ConnectionManagerServices {
 }
 
 let connectionEditorPanel: vscode.WebviewPanel | undefined;
+let cachedDriverConfig: {
+  databases: Record<string, { icon?: string; driver: string; default_port?: number; uri_template: string }>;
+} | undefined;
+let cachedHtmlTemplate: string | undefined;
 
 export async function addConnection(
   context: vscode.ExtensionContext,
@@ -234,7 +238,12 @@ export async function openConnectionEditor(
         // Resolve extras from driver config
         const dbType = payload.databaseType?.trim() || "";
         let driverExtras: string[] | undefined;
-        if (dbType) {
+        if (dbType && cachedDriverConfig) {
+          const dbEntry = cachedDriverConfig.databases[dbType] as any;
+          if (dbEntry && Array.isArray(dbEntry.extras)) {
+            driverExtras = dbEntry.extras;
+          }
+        } else if (dbType) {
           try {
             const driverConfigPath = path.join(context.extensionPath, "media", "driver_config.json");
             const raw = fs.readFileSync(driverConfigPath, "utf8");
@@ -343,38 +352,47 @@ function getConnectionEditorHtml(
   };
 
   let driverConfig = defaultDriverConfig;
-  try {
-    const driverConfigPath = path.join(mediaPath, "driver_config.json");
-    const raw = fs.readFileSync(driverConfigPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && parsed.databases) {
-      driverConfig = parsed;
+  if (cachedDriverConfig) {
+    driverConfig = cachedDriverConfig;
+  } else {
+    try {
+      const driverConfigPath = path.join(mediaPath, "driver_config.json");
+      const raw = fs.readFileSync(driverConfigPath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && parsed.databases) {
+        driverConfig = parsed;
+      }
+    } catch {
+      // Keep default config when file is missing or invalid.
     }
-  } catch {
-    // Keep default config when file is missing or invalid.
-  }
 
-  // Inline icon SVG files as base64 data URIs so they load without CSP issues.
-  for (const dbConfig of Object.values(
-    driverConfig.databases as Record<string, { icon?: string }>,
-  )) {
-    if (dbConfig.icon) {
-      try {
-        const iconPath = path.join(mediaPath, dbConfig.icon);
-        const svgContent = fs.readFileSync(iconPath);
-        dbConfig.icon = `data:image/svg+xml;base64,${svgContent.toString("base64")}`;
-      } catch {
-        dbConfig.icon = undefined;
+    // Inline icon SVG files as base64 data URIs so they load without CSP issues.
+    for (const dbConfig of Object.values(
+      driverConfig.databases as Record<string, { icon?: string }>,
+    )) {
+      if (dbConfig.icon) {
+        try {
+          const iconPath = path.join(mediaPath, dbConfig.icon);
+          const svgContent = fs.readFileSync(iconPath);
+          dbConfig.icon = `data:image/svg+xml;base64,${svgContent.toString("base64")}`;
+        } catch {
+          dbConfig.icon = undefined;
+        }
       }
     }
+
+    cachedDriverConfig = driverConfig;
   }
 
   initialPayload.driverConfig = driverConfig;
   initialPayload.installedDrivers = installedDrivers;
   const initialJson = JSON.stringify(initialPayload).replace(/</g, "\\u003c");
 
-  let html = fs.readFileSync(htmlPath, "utf8");
-  html = html
+  if (!cachedHtmlTemplate) {
+    cachedHtmlTemplate = fs.readFileSync(htmlPath, "utf8");
+  }
+
+  const html = cachedHtmlTemplate
     .replace("${title}", isEdit ? "Edit Connection" : "New Connection")
     .replace("${heading}", isEdit ? "Update Connection" : "Create Connection")
     .replace("${saveLabel}", isEdit ? "Update" : "Create")
