@@ -3,7 +3,7 @@
   "displayName": "SQL For ALL",
   "publisher": "sql4all",
   "description": "Query SQL/NoSQL Databases using SQL — powered by SQLAlchemy",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "engines": {
     "vscode": "^1.110.0"
@@ -80,12 +80,6 @@
         "icon": "$(trash)"
       },
       {
-        "command": "sql4all.refreshConnections",
-        "title": "Refresh Connections",
-        "category": "SQL4ALL",
-        "icon": "$(refresh)"
-      },
-      {
         "command": "sql4all.selectPythonExecutable",
         "title": "SQL4ALL: Select Python Executable",
         "category": "SQL4ALL",
@@ -108,6 +102,18 @@
         "title": "Connect...",
         "category": "SQL4ALL",
         "icon": "$(plug)"
+      },
+      {
+        "command": "sql4all.disconnectDatabase",
+        "title": "Disconnect...",
+        "category": "SQL4ALL",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "sql4all.refreshConnection",
+        "title": "Refresh...",
+        "category": "SQL4ALL",
+        "icon": "$(refresh)"
       },
       {
         "command": "sql4all.exportConnections",
@@ -149,11 +155,6 @@
           "group": "navigation@1"
         },
         {
-          "command": "sql4all.refreshConnections",
-          "when": "view == sql4all.connections",
-          "group": "navigation@2"
-        },
-        {
           "command": "sql4all.importConnections",
           "when": "view == sql4all.connections",
           "group": "navigation@3"
@@ -167,7 +168,7 @@
       "view/item/context": [
         {
           "command": "sql4all.connectConnection",
-          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
+          "when": "view == sql4all.connections && viewItem =~ /^sql4all\\.connectionItem/",
           "group": "inline@1"
         },
         {
@@ -176,18 +177,28 @@
           "group": "1_connect@1"
         },
         {
+          "command": "sql4all.disconnectDatabase",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem.connected",
+          "group": "1_connect@2"
+        },
+        {
+          "command": "sql4all.refreshConnection",
+          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem.connected",
+          "group": "1_connect@3"
+        },
+        {
           "command": "sql4all.editConnection",
-          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
+          "when": "view == sql4all.connections && viewItem =~ /^sql4all\\.connectionItem/",
           "group": "2_manage@1"
         },
         {
           "command": "sql4all.deleteConnection",
-          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
+          "when": "view == sql4all.connections && viewItem =~ /^sql4all\\.connectionItem/",
           "group": "2_manage@2"
         },
         {
           "command": "sql4all.reloadDriver",
-          "when": "view == sql4all.connections && viewItem == sql4all.connectionItem",
+          "when": "view == sql4all.connections && viewItem =~ /^sql4all\\.connectionItem/",
           "group": "3_driver@1"
         },
         {

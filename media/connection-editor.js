@@ -1,4 +1,16 @@
 const vscode = acquireVsCodeApi();
+
+function maskPasswordInUri(uri) {
+  try {
+    return uri.replace(
+      /(:\/\/[^:/?#]+):([^@]+)@/,
+      (_, prefix) => prefix + ":***@",
+    );
+  } catch {
+    return uri;
+  }
+}
+
 const initial = window.__SQL4ALL_CONNECTION_EDITOR__ || {
   name: "",
   connection: {
@@ -324,8 +336,9 @@ if (dbTypeWidget) {
     // Restore the saved connection string if it was manually edited
     if (initial.connection.connectionString) {
       const connStringEl = document.getElementById("connectionString");
-      if (connStringEl.value !== initial.connection.connectionString) {
-        connStringEl.value = initial.connection.connectionString;
+      const maskedConnectionString = maskPasswordInUri(initial.connection.connectionString);
+      if (connStringEl.value !== maskedConnectionString) {
+        connStringEl.value = maskedConnectionString;
         connStringEl.dataset.manuallyEdited = "true";
       }
     }

@@ -102,6 +102,12 @@ def parse_arguments():
         dest='env_vars',
         help='JSON object of environment variables set by frontend',
     )
+    parser.add_argument(
+        '--mode',
+        default='single',
+        choices=['single', 'server'],
+        help='Execution mode: single (one-shot) or server (persistent stdin/stdout loop)',
+    )
     return parser.parse_args()
 
 
@@ -253,56 +259,157 @@ def action_query(engine, sql_query, query_params):
         ) from e
 
 
+def dispatch_action(engine, action, query='', params_raw=''):
+    """Route an action to the appropriate handler and log the result."""
+    logger.debug('Action: %s', action)
+
+    if action == 'ping':
+        result = action_ping(engine)
+    elif action == 'list-tables':
+        result = action_list_tables(engine)
+    elif action == 'query':
+        if not query or not query.strip():
+            raise ValueError('Query is empty.')
+        logger.debug('Query: %s', query)
+        params = parse_query_params(params_raw)
+        result = action_query(engine, query, params)
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+    row_count = (
+        len(result.get('rows', []))
+        if isinstance(result, dict) else 0
+    )
+    logger.debug('Result: %d row(s)', row_count)
+    return result
+
+
+def create_engine(connection_string):
+    """Create a SQLAlchemy engine, installing dependencies if needed."""
+    sa = ensure_sqlalchemy()
+    return sa.create_engine(connection_string)
+
+
+def dispose_engine(engine):
+    """Safely dispose a SQLAlchemy engine."""
+    if engine is not None:
+        try:
+            engine.dispose()
+        except Exception as dispose_error:
+            logger.warning(
+                'Failed to dispose engine: %s',
+                dispose_error,
+            )
+
+
+def log_env_vars(env_vars_raw):
+    """Parse and log environment variables from CLI argument."""
+    if not env_vars_raw:
+        return
+    try:
+        env_vars = json.loads(env_vars_raw)
+        if isinstance(env_vars, dict) and env_vars:
+            logger.debug(
+                'Environment variables: %s',
+                json.dumps(env_vars)
+            )
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning('Failed to parse env-vars: %s', e)
+
+
+def write_response(response):
+    """Write a JSON response line to stdout."""
+    sys.stdout.write(json.dumps(response) + '\n')
+    sys.stdout.flush()
+
+
+def server_loop(args):
+    """Run as a persistent process, reading JSON commands from stdin."""
+    engine = None
+    try:
+        masked = _mask_password(args.connection_string)
+        logger.debug(
+            'Server mode started. Connection (masked): %s',
+            masked,
+        )
+        log_env_vars(args.env_vars)
+
+        engine = create_engine(args.connection_string)
+        write_response({"kind": "ready"})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    'Invalid JSON from stdin: %s', e
+                )
+                write_response(
+                    {"error": f"Invalid JSON: {e}"}
+                )
+                continue
+
+            action = request.get('action', 'query')
+
+            if action == 'shutdown':
+                logger.debug('Shutdown requested')
+                break
+
+            try:
+                result = dispatch_action(
+                    engine,
+                    action,
+                    request.get('query', ''),
+                    request.get('params', ''),
+                )
+                write_response(result)
+            except Exception as e:
+                logger.error(
+                    'Server action failed: %s',
+                    e, exc_info=True,
+                )
+                write_response({"error": str(e)})
+
+    except Exception as e:
+        logger.error(
+            'Server loop fatal: %s',
+            e, exc_info=True,
+        )
+        write_response({"error": str(e)})
+        return 1
+    finally:
+        dispose_engine(engine)
+
+    logger.debug('Server mode exited')
+    return 0
+
+
 def main():
     """Main entry point."""
     engine = None
     try:
         args = parse_arguments()
-        logger.debug('Action: %s', args.action)
+
+        if args.mode == 'server':
+            return server_loop(args)
+
         masked = _mask_password(args.connection_string)
         logger.debug('Connection (masked): %s', masked)
+        log_env_vars(args.env_vars)
 
-        if args.env_vars:
-            try:
-                env_vars = json.loads(args.env_vars)
-                if isinstance(env_vars, dict) and env_vars:
-                    logger.debug(
-                        'Environment variables: %s',
-                        json.dumps(env_vars)
-                    )
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(
-                    'Failed to parse env-vars: %s', e
-                )
-
-        sa = ensure_sqlalchemy()
-        engine = sa.create_engine(
-            args.connection_string
+        engine = create_engine(args.connection_string)
+        result = dispatch_action(
+            engine,
+            args.action,
+            args.query,
+            args.params,
         )
 
-        if args.action == 'ping':
-            results = action_ping(engine)
-        elif args.action == 'list-tables':
-            results = action_list_tables(engine)
-        else:
-            query = args.query
-            if not query or not query.strip():
-                raise ValueError('Query is empty.')
-            logger.debug('Query: %s', query)
-            params = parse_query_params(args.params)
-            results = action_query(
-                engine, query, params
-            )
-
-        row_count = (
-            len(results.get('rows', []))
-            if isinstance(results, dict) else 0
-        )
-        logger.debug(
-            'Result: %d row(s)', row_count
-        )
-
-        print(json.dumps(results))
+        print(json.dumps(result))
         return 0
 
     except Exception as e:
@@ -316,14 +423,7 @@ def main():
         )
         return 1
     finally:
-        if engine is not None:
-            try:
-                engine.dispose()
-            except Exception as dispose_error:
-                logger.warning(
-                    'Failed to dispose engine: %s',
-                    dispose_error,
-                )
+        dispose_engine(engine)
 
 
 if __name__ == '__main__':

@@ -7,7 +7,6 @@ import {
   ConnectionStore,
   normalizeConnection,
   formatConnectionSummary,
-  formatConnectionTooltip,
   EXTENSION_NAMESPACE,
   BRAND_NAME,
   CONNECTION_VIEW_ID,
@@ -28,6 +27,7 @@ import {
   initSqlExecutor,
   createOrShowPanel,
   removeConnectionState,
+  killPersistentProcess,
 } from "./sqlExecutor";
 
 declare const process: any;
@@ -53,10 +53,41 @@ class ConnectionItem extends vscode.TreeItem {
       vscode.TreeItemCollapsibleState.Collapsed,
     );
     const resolvedSummary = summary ?? formatConnectionSummary(connection);
-    this.description = resolvedSummary;
-    this.tooltip = formatConnectionTooltip(connectionName, resolvedSummary, connection);
+    this.description = "";
+    this.tooltip = this.buildTooltip(connectionName, resolvedSummary, connection);
     this.contextValue = CONNECTION_ITEM_CONTEXT;
     this.iconPath = iconPath ?? new vscode.ThemeIcon("database");
+  }
+
+  updateContextValue(connected: boolean): void {
+    this.contextValue = connected
+      ? `${CONNECTION_ITEM_CONTEXT}.connected`
+      : CONNECTION_ITEM_CONTEXT;
+  }
+
+  private buildTooltip(
+    name: string,
+    summary: string,
+    connection: DbConnection,
+  ): vscode.MarkdownString {
+    const md = new vscode.MarkdownString();
+    md.supportHtml = true;
+
+    const safeName = name.replace(/([*_\\`])/g, "\\$1");
+    const tick = (s: string) => s.replace(/`/g, "'");
+
+    md.appendMarkdown(`**${safeName}**\n\n`);
+    md.appendMarkdown(`<span style="color:#4EC9B0;">\`${tick(summary)}\`</span>\n\n`);
+
+    const envVars = connection.envVars;
+    if (envVars && Object.keys(envVars).length > 0) {
+      md.appendMarkdown(`***Environment Variables:***\n\n`);
+      for (const [key, value] of Object.entries(envVars)) {
+        md.appendMarkdown(`- \`${tick(key)}\` = \`${tick(value)}\`\n`);
+      }
+    }
+
+    return md;
   }
 }
 
@@ -77,6 +108,10 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   private readonly driverIconsByDriver = new Map<string, vscode.Uri>();
+  private readonly disconnectedIconsByDriver = new Map<string, vscode.Uri>();
+  private readonly iconsByDbType = new Map<string, vscode.Uri>();
+  private readonly disconnectedIconsByDbType = new Map<string, vscode.Uri>();
+  private readonly connectedConnections = new Set<string>();
   private cachedItems: ConnectionItem[] = [];
   private tableCache = new Map<string, TableItem[]>();
 
@@ -105,12 +140,18 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
         .sort((a, b) => a.localeCompare(b))
         .map((name) => {
           const connection = connections[name];
-          return new ConnectionItem(
+          const connected = this.connectedConnections.has(name);
+          const item = new ConnectionItem(
             name,
             connection,
-            this.resolveConnectionIcon(connection),
+            this.resolveConnectionIcon(connection, name),
             this.resolveConnectionSummary(connection),
           );
+          if (connected) {
+            item.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+            item.updateContextValue(true);
+          }
+          return item;
         });
       return this.cachedItems;
     }
@@ -139,15 +180,37 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
     return this.tableCache.has(connectionName);
   }
 
+  isConnected(connectionName: string): boolean {
+    return this.connectedConnections.has(connectionName);
+  }
+
   refreshConnectionTables(connectionName: string): void {
     this.tableCache.delete(connectionName);
     const target = this.findItem(connectionName);
     this._onDidChangeTreeData.fire(target);
   }
 
+  clearTableCache(connectionName: string): void {
+    this.tableCache.delete(connectionName);
+  }
+
+  disconnectAndRefresh(connectionName: string): void {
+    this.tableCache.delete(connectionName);
+    this.setConnectionState(connectionName, false);
+  }
+
   private loadDriverIconMap(): void {
     const mediaPath = path.join(this.context.extensionPath, "media");
     const driverConfigPath = path.join(mediaPath, "driver_config.json");
+    const disconnectedDir = path.join(
+      this.context.globalStorageUri.fsPath, "disconnected-icons",
+    );
+
+    try {
+      if (!fs.existsSync(disconnectedDir)) {
+        fs.mkdirSync(disconnectedDir, { recursive: true });
+      }
+    } catch { /* ignore */ }
 
     try {
       const raw = fs.readFileSync(driverConfigPath, "utf8");
@@ -158,13 +221,9 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
         >;
       };
 
-      for (const dbConfig of Object.values(parsed.databases ?? {})) {
+      for (const [dbType, dbConfig] of Object.entries(parsed.databases ?? {})) {
         const driver = String(dbConfig.driver || "").trim().toLowerCase();
         const iconRelativePath = String(dbConfig.icon || "").trim();
-        if (!driver) {
-          continue;
-        }
-
         if (!iconRelativePath) {
           continue;
         }
@@ -174,84 +233,201 @@ class ConnectionTreeProvider implements vscode.TreeDataProvider<TreeItem> {
           continue;
         }
 
-        this.driverIconsByDriver.set(driver, vscode.Uri.file(iconAbsolutePath));
+        const iconUri = vscode.Uri.file(iconAbsolutePath);
+        if (driver) {
+          this.driverIconsByDriver.set(driver, iconUri);
+        }
+        this.iconsByDbType.set(dbType.toLowerCase(), iconUri);
+
+        // Generate greyscale disconnected variant
+        try {
+          const iconFileName = path.basename(iconRelativePath);
+          const disconnectedPath = path.join(disconnectedDir, iconFileName);
+          if (!fs.existsSync(disconnectedPath)) {
+            const svgContent = fs.readFileSync(iconAbsolutePath, "utf8");
+            const greySvg = this.generateDisconnectedSvg(svgContent);
+            fs.writeFileSync(disconnectedPath, greySvg, "utf8");
+          }
+          const disconnectedUri = vscode.Uri.file(disconnectedPath);
+          if (driver) {
+            this.disconnectedIconsByDriver.set(driver, disconnectedUri);
+          }
+          this.disconnectedIconsByDbType.set(dbType.toLowerCase(), disconnectedUri);
+        } catch { /* skip disconnected icon on error */ }
       }
     } catch {
       // Keep default theme icon when driver config cannot be loaded.
     }
   }
 
+  private generateDisconnectedSvg(originalSvg: string): string {
+    // Extract viewBox or default to 0 0 128 128
+    const viewBoxMatch = originalSvg.match(/viewBox="([^"]+)"/);
+    const viewBox = viewBoxMatch ? viewBoxMatch[1] : "0 0 128 128";
+    const parts = viewBox.split(/\s+/).map(Number);
+    const vbWidth = parts[2] || 128;
+    const vbHeight = parts[3] || 128;
+
+    // Extract inner content (everything between <svg ...> and </svg>)
+    const innerMatch = originalSvg.match(/<svg[^>]*>([\s\S]*)<\/svg>/i);
+    const innerContent = innerMatch ? innerMatch[1] : "";
+
+    // Badge position: bottom-right corner
+    const badgeR = Math.round(vbWidth * 0.16);
+    const badgeCx = vbWidth - badgeR - 2;
+    const badgeCy = vbHeight - badgeR - 2;
+    const lineOffset = Math.round(badgeR * 0.6);
+    const strokeW = Math.max(2, Math.round(badgeR * 0.25));
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">
+<defs>
+<filter id="grey"><feColorMatrix type="saturate" values="0"/></filter>
+</defs>
+<g filter="url(#grey)" opacity="0.45">
+${innerContent}
+</g>
+<circle cx="${badgeCx}" cy="${badgeCy}" r="${badgeR}" fill="#e74c3c"/>
+<line x1="${badgeCx - lineOffset}" y1="${badgeCy - lineOffset}" x2="${badgeCx + lineOffset}" y2="${badgeCy + lineOffset}" stroke="#fff" stroke-width="${strokeW}" stroke-linecap="round"/>
+</svg>`;
+  }
+
   private resolveConnectionIcon(
     connection: DbConnection,
+    connectionName?: string,
   ): vscode.ThemeIcon | vscode.Uri {
     const driver = String(connection.driver || "").trim().toLowerCase();
-    if (!driver) {
-      return new vscode.ThemeIcon("database");
+    const dbType = String(connection.databaseType || "").trim().toLowerCase();
+
+    const isConnected = connectionName ? this.connectedConnections.has(connectionName) : false;
+    if (isConnected) {
+      return (driver ? this.driverIconsByDriver.get(driver) : undefined)
+        ?? this.iconsByDbType.get(dbType)
+        ?? new vscode.ThemeIcon("database");
     }
 
-    return this.driverIconsByDriver.get(driver) ?? new vscode.ThemeIcon("database");
+    return (driver ? this.disconnectedIconsByDriver.get(driver) : undefined)
+      ?? this.disconnectedIconsByDbType.get(dbType)
+      ?? (driver ? this.driverIconsByDriver.get(driver) : undefined)
+      ?? this.iconsByDbType.get(dbType)
+      ?? new vscode.ThemeIcon("database");
   }
 
   getDriverIcon(connection: DbConnection): vscode.Uri | undefined {
     const driver = String(connection.driver || "").trim().toLowerCase();
-    if (!driver) {
-      return undefined;
-    }
+    const dbType = String(connection.databaseType || "").trim().toLowerCase();
 
-    return this.driverIconsByDriver.get(driver);
+    return (driver ? this.driverIconsByDriver.get(driver) : undefined)
+      ?? this.iconsByDbType.get(dbType)
+      ?? undefined;
   }
 
   private resolveConnectionSummary(connection: DbConnection): string {
     return formatConnectionSummary(connection);
   }
 
-  private async fetchTableItems(parent: ConnectionItem): Promise<TableItem[]> {
-    const cached = this.tableCache.get(parent.connectionName);
-    if (cached) {
-      return cached;
+  setConnectionState(connectionName: string, connected: boolean): void {
+    const changed = connected
+      ? !this.connectedConnections.has(connectionName)
+      : this.connectedConnections.has(connectionName);
+
+    if (!changed) {
+      return;
     }
 
-    try {
-      const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
-      const envVars = parent.connection.envVars;
-      const args = [
-        pythonScript,
-        `--connection-string=${parent.connection.connectionString || ""}`,
-        `--action=list-tables`,
-      ];
+    if (connected) {
+      this.connectedConnections.add(connectionName);
+    } else {
+      this.connectedConnections.delete(connectionName);
+    }
 
-      if (envVars && Object.keys(envVars).length > 0) {
-        args.push(`--env-vars=${JSON.stringify(envVars)}`);
+    // Rebuild the affected item's icon and context value
+    const item = this.findItem(connectionName);
+    if (item) {
+      item.iconPath = this.resolveConnectionIcon(item.connection, connectionName);
+      item.updateContextValue(connected);
+      if (connected) {
+        item.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
       }
-
-      const result = await runPythonScript(this.context, args, undefined, envVars);
-      const parsed = JSON.parse(result);
-
-      const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
-      const tableNames: string[] = rows
-        .map((row: any) => {
-          if (typeof row === "string") {
-            return row;
-          }
-          if (typeof row === "object" && row !== null) {
-            const vals = Object.values(row);
-            return vals.length > 0 ? String(vals[0]) : "";
-          }
-          return String(row);
-        })
-        .filter((name: string) => name.length > 0);
-
-      const items = tableNames.map(
-        (name) => new TableItem(name, parent.connectionName),
-      );
-      this.tableCache.set(parent.connectionName, items);
-      return items;
-    } catch (err: any) {
-      vscode.window.showErrorMessage(
-        `Failed to list tables for "${parent.connectionName}": ${err?.message || String(err)}`,
-      );
-      return [];
+      this._onDidChangeTreeData.fire(item);
     }
+  }
+
+  /**
+   * Explicitly connect: fetch tables, and only on success update icon/state/expand.
+   * Returns true if tables were listed successfully.
+   */
+  async connectAndListTables(connectionName: string): Promise<boolean> {
+    const connection = this.getConnection(connectionName);
+    if (!connection) {
+      return false;
+    }
+
+    // Show loading spinner on the tree item
+    const item = this.findItem(connectionName);
+    const previousIcon = item?.iconPath;
+    if (item) {
+      item.iconPath = new vscode.ThemeIcon("loading~spin");
+      this._onDidChangeTreeData.fire(item);
+    }
+
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Connecting to "${connectionName}"...`,
+        cancellable: false,
+      },
+      async () => {
+        try {
+          const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
+          const envVars = connection.envVars;
+          const args = [
+            pythonScript,
+            `--connection-string=${connection.connectionString || ""}`,
+            `--action=list-tables`,
+          ];
+
+          if (envVars && Object.keys(envVars).length > 0) {
+            args.push(`--env-vars=${JSON.stringify(envVars)}`);
+          }
+
+          const result = await runPythonScript(this.context, args, undefined, envVars);
+          const parsed = JSON.parse(result);
+
+          const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
+          const tableNames: string[] = rows
+            .map((row: any) => {
+              if (typeof row === "string") { return row; }
+              if (typeof row === "object" && row !== null) {
+                const vals = Object.values(row);
+                return vals.length > 0 ? String(vals[0]) : "";
+              }
+              return String(row);
+            })
+            .filter((name: string) => name.length > 0);
+
+          const items = tableNames.map(
+            (name) => new TableItem(name, connectionName),
+          );
+          this.tableCache.set(connectionName, items);
+          this.setConnectionState(connectionName, true);
+          return true;
+        } catch (err: any) {
+          // Restore previous icon on failure
+          if (item) {
+            item.iconPath = previousIcon ?? this.resolveConnectionIcon(connection, connectionName);
+            this._onDidChangeTreeData.fire(item);
+          }
+          vscode.window.showErrorMessage(
+            `Failed to connect "${connectionName}": ${err?.message || String(err)}`,
+          );
+          return false;
+        }
+      },
+    );
+  }
+
+  private async fetchTableItems(parent: ConnectionItem): Promise<TableItem[]> {
+    return this.tableCache.get(parent.connectionName) ?? [];
   }
 
   getConnections(): ConnectionStore {
@@ -307,6 +483,8 @@ export function activate(context: vscode.ExtensionContext) {
     getDriverIcon: (conn) => connectionTreeProviderRef?.getDriverIcon(conn),
     revealConnection: (name) => revealConnection(name),
     getConnection: (name) => connectionTreeProvider.getConnection(name),
+    onConnectionStateChanged: (name, connected) =>
+      connectionTreeProvider.setConnectionState(name, connected),
     runPythonScript,
   });
 
@@ -370,9 +548,12 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      // Ensure tables are listed (expand tree node) before opening executor
-      if (!connectionTreeProvider.hasTablesCached(item.connectionName) && connectionTreeView) {
-        await connectionTreeView.reveal(item, { expand: true, select: false, focus: false });
+      // If not connected, run the connect flow first
+      if (!connectionTreeProvider.isConnected(item.connectionName)) {
+        const ok = await connectionTreeProvider.connectAndListTables(item.connectionName);
+        if (!ok) {
+          return;
+        }
       }
 
       createOrShowPanel(context, item.connectionName, item.connection);
@@ -422,11 +603,6 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
-  const refreshConnectionsDisposable = vscode.commands.registerCommand(
-    `${EXTENSION_NAMESPACE}.refreshConnections`,
-    () => connectionTreeProvider.refresh(),
-  );
-
   const copyTableNameDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.copyTableName`,
     async (item?: TableItem) => {
@@ -444,12 +620,44 @@ export function activate(context: vscode.ExtensionContext) {
   const connectDatabaseDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.connectDatabase`,
     async (item?: ConnectionItem) => {
-      if (!item || !connectionTreeView) {
+      if (!item) {
         return;
       }
 
-      connectionTreeProvider.refreshConnectionTables(item.connectionName);
-      await connectionTreeView.reveal(item, { expand: true, select: true, focus: true });
+      await connectionTreeProvider.connectAndListTables(item.connectionName);
+    },
+  );
+
+  const disconnectDatabaseDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.disconnectDatabase`,
+    async (item?: ConnectionItem) => {
+      if (!item) {
+        return;
+      }
+
+      const name = item.connectionName;
+
+      const answer = await vscode.window.showWarningMessage(
+        `Disconnect from "${name}"? This will close the SQL editor and release the connection.`,
+        { modal: true },
+        "Disconnect",
+      );
+
+      if (answer !== "Disconnect") {
+        return;
+      }
+
+      // Close the SQL editor panel
+      const panel = panelsByConnection.get(name);
+      if (panel) {
+        panel.dispose();
+      }
+
+      // Kill persistent Python subprocess (keep saved state)
+      killPersistentProcess(name);
+
+      // Reset icon, clear tables, full tree rebuild
+      connectionTreeProvider.disconnectAndRefresh(name);
     },
   );
 
@@ -511,6 +719,17 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
+  const refreshConnectionDisposable = vscode.commands.registerCommand(
+    `${EXTENSION_NAMESPACE}.refreshConnection`,
+    async (item?: ConnectionItem) => {
+      if (!item) {
+        return;
+      }
+
+      await connectionTreeProvider.connectAndListTables(item.connectionName);
+    },
+  );
+
   const selectPythonExecutableDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.selectPythonExecutable`,
     () => selectPythonExecutable(context),
@@ -540,10 +759,11 @@ export function activate(context: vscode.ExtensionContext) {
     connectConnectionDisposable,
     editConnectionDisposable,
     deleteConnectionDisposable,
-    refreshConnectionsDisposable,
     copyTableNameDisposable,
     connectDatabaseDisposable,
+    disconnectDatabaseDisposable,
     reloadDriverDisposable,
+    refreshConnectionDisposable,
     selectPythonExecutableDisposable,
     exportConnectionsDisposable,
     importConnectionsDisposable,

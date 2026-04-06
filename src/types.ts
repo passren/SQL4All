@@ -68,7 +68,7 @@ export function formatConnectionSummary(
   connection: DbConnection,
 ): string {
   if (connection.connectionString) {
-    return connection.connectionString;
+    return maskPasswordInUri(connection.connectionString);
   }
 
   const host = connection.host || "";
@@ -82,17 +82,15 @@ export function formatConnectionSummary(
   return `${host}${portSegment}${databaseSegment}`;
 }
 
-export function formatConnectionTooltip(
-  connectionName: string,
-  summary: string,
-  connection: DbConnection,
-): string {
-  const lines = [connectionName, summary];
-  if (connection.database?.trim()) {
-    lines.push(`DB: ${connection.database.trim()}`);
+function maskPasswordInUri(uri: string): string {
+  try {
+    return uri.replace(
+      /(:\/\/[^:/?#]+):([^@]+)@/,
+      (_, prefix, _password) => `${prefix}:***@`,
+    );
+  } catch {
+    return uri;
   }
-
-  return lines.filter(Boolean).join("\n");
 }
 
 export function escapeHtml(value: string): string {

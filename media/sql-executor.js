@@ -231,12 +231,12 @@ function renderResultsTable(payload, elapsedSeconds) {
     return;
   }
 
-  if (rows.length === 0 || columns.length === 0) {
+  if (columns.length === 0) {
     setResultMetrics(0, 0);
     setExportState(false);
-    renderPlaceholder("Execution returned no rows.", "neutral");
+    renderPlaceholder("Execution returned no data.", "neutral");
     setResultStatus(
-      `Execution completed with no returned rows. (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+      `Execution completed with no returned data. (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
       "neutral",
     );
     return;
@@ -264,6 +264,26 @@ function renderResultsTable(payload, elapsedSeconds) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
+
+  if (rows.length === 0) {
+    setResultMetrics(0, 0);
+    setExportState(false);
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = columns.length + 1;
+    td.className = "no-data-cell";
+    td.textContent = "No data";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    table.appendChild(tbody);
+    container.innerHTML = "";
+    container.appendChild(table);
+    setResultStatus(
+      `Returned 0 rows. (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+      "neutral",
+    );
+    return;
+  }
   rows.forEach((row, index) => {
     const tr = document.createElement("tr");
 

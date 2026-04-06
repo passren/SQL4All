@@ -16,6 +16,7 @@ export interface SqlExecutorServices {
   getDriverIcon(connection: DbConnection): vscode.Uri | undefined;
   revealConnection(connectionName: string): void;
   getConnection(name: string): DbConnection | undefined;
+  onConnectionStateChanged(connectionName: string, connected: boolean): void;
   runPythonScript(
     context: vscode.ExtensionContext,
     scriptArgs: string[],
@@ -26,7 +27,166 @@ export interface SqlExecutorServices {
 
 let services: SqlExecutorServices;
 const runningProcesses = new Map<string, ChildProcess>();
+const persistentProcesses = new Map<string, PersistentPythonProcess>();
 const linkedFiles = new Map<string, string>();
+
+class PersistentPythonProcess {
+  private child: ChildProcess | null = null;
+  private buffer = "";
+  private pendingResolve: ((value: string) => void) | null = null;
+  private pendingReject: ((reason: any) => void) | null = null;
+  private ready = false;
+  private readyPromise: Promise<void> | null = null;
+  private dead = false;
+
+  constructor(
+    private readonly connectionName: string,
+    private readonly context: vscode.ExtensionContext,
+    private readonly connectionString: string,
+    private readonly envVars?: Record<string, string>,
+  ) {}
+
+  async start(): Promise<void> {
+    const pythonScript = path.join(
+      this.context.extensionPath,
+      "python",
+      "query_executor.py",
+    );
+
+    const args = [
+      pythonScript,
+      `--connection-string=${this.connectionString}`,
+      `--mode=server`,
+    ];
+
+    if (this.envVars && Object.keys(this.envVars).length > 0) {
+      args.push(`--env-vars=${JSON.stringify(this.envVars)}`);
+    }
+
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      services.runPythonScript(this.context, args, (child) => {
+        this.child = child;
+
+        child.stdout!.on("data", (data: Buffer) => {
+          this.buffer += data.toString();
+          this.processBuffer();
+        });
+
+        child.stderr!.on("data", (data: Buffer) => {
+          const text = data.toString().trim();
+          if (text) {
+            // Store stderr for the pending request
+            if (this.pendingReject) {
+              this.pendingReject(new Error(text));
+              this.pendingResolve = null;
+              this.pendingReject = null;
+            }
+          }
+        });
+
+        child.on("close", () => {
+          this.dead = true;
+          if (this.pendingReject) {
+            this.pendingReject(new Error("Python process exited unexpectedly."));
+            this.pendingResolve = null;
+            this.pendingReject = null;
+          }
+          if (!this.ready) {
+            reject(new Error("Python process exited before becoming ready."));
+          }
+          persistentProcesses.delete(this.connectionName);
+          services.onConnectionStateChanged(this.connectionName, false);
+        });
+      }, this.envVars).catch(() => {
+        // runPythonScript rejection is handled via child close event
+      });
+
+      // Wait for the "ready" signal via processBuffer
+      const originalProcessBuffer = this.processBuffer.bind(this);
+      this.processBuffer = () => {
+        const lines = this.buffer.split("\n");
+        while (lines.length > 1) {
+          const line = lines.shift()!;
+          if (!line.trim()) { continue; }
+          try {
+            const msg = JSON.parse(line);
+            if (msg.kind === "ready") {
+              this.ready = true;
+              this.processBuffer = originalProcessBuffer;
+              this.buffer = lines.join("\n");
+              resolve();
+              return;
+            }
+          } catch {
+            // ignore parse errors during startup
+          }
+        }
+        this.buffer = lines.join("\n");
+      };
+    });
+
+    return this.readyPromise;
+  }
+
+  private processBuffer(): void {
+    const lines = this.buffer.split("\n");
+    while (lines.length > 1) {
+      const line = lines.shift()!;
+      if (!line.trim()) { continue; }
+      if (this.pendingResolve) {
+        this.pendingResolve(line);
+        this.pendingResolve = null;
+        this.pendingReject = null;
+      }
+    }
+    this.buffer = lines.join("\n");
+  }
+
+  async send(request: Record<string, any>): Promise<any> {
+    if (this.dead || !this.child) {
+      throw new Error("Python process is not running.");
+    }
+
+    if (this.readyPromise) {
+      await this.readyPromise;
+    }
+
+    return new Promise<any>((resolve, reject) => {
+      this.pendingResolve = (line: string) => {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.error) {
+            reject(new Error(parsed.error));
+          } else {
+            resolve(parsed);
+          }
+        } catch (e) {
+          reject(new Error(`Invalid JSON response: ${line}`));
+        }
+      };
+      this.pendingReject = reject;
+
+      const payload = JSON.stringify(request) + "\n";
+      this.child!.stdin!.write(payload);
+    });
+  }
+
+  getChild(): ChildProcess | null {
+    return this.child;
+  }
+
+  isDead(): boolean {
+    return this.dead;
+  }
+
+  kill(): void {
+    if (this.child && !this.dead) {
+      this.child.kill();
+      this.dead = true;
+    }
+    persistentProcesses.delete(this.connectionName);
+  }
+}
 
 export function initSqlExecutor(s: SqlExecutorServices): void {
   services = s;
@@ -84,9 +244,26 @@ export function createOrShowPanel(
 
   panel.onDidDispose(async () => {
     services.panelsByConnection.delete(connectionName);
+    const proc = persistentProcesses.get(connectionName);
+    if (proc) {
+      proc.kill();
+    }
+    services.onConnectionStateChanged(connectionName, false);
   }, undefined);
 
   updateWebviewContent(context, panel, connectionName, connection);
+
+  // Eagerly start the persistent Python process and verify connectivity
+  // so the connection icon turns colorful only after a successful ping.
+  const freshConnection = services.getConnection(connectionName) ?? connection;
+  if (freshConnection.connectionString) {
+    getOrCreatePersistentProcess(connectionName, context, freshConnection)
+      .then((proc) => proc.send({ action: "ping" }))
+      .then(() => services.onConnectionStateChanged(connectionName, true))
+      .catch(() => {
+        // Connection failed — icon stays grey.
+      });
+  }
 }
 
 function updateWebviewContent(
@@ -232,6 +409,13 @@ async function saveQueryPaneHeight(
   await context.globalState.update(QUERY_LAYOUTS_STORE_KEY, layouts);
 }
 
+export function killPersistentProcess(connectionName: string): void {
+  const proc = persistentProcesses.get(connectionName);
+  if (proc) {
+    proc.kill();
+  }
+}
+
 export async function removeConnectionState(
   context: vscode.ExtensionContext,
   connectionName: string,
@@ -249,6 +433,11 @@ export async function removeConnectionState(
   }
 
   await saveLinkedFile(context, connectionName, null);
+
+  const proc = persistentProcesses.get(connectionName);
+  if (proc) {
+    proc.kill();
+  }
 }
 
 async function handleWebviewMessage(
@@ -342,15 +531,19 @@ function cancelRunningQuery(
   connectionName: string,
   panel: vscode.WebviewPanel,
 ): void {
+  const proc = persistentProcesses.get(connectionName);
+  if (proc) {
+    proc.kill();
+  }
   const child = runningProcesses.get(connectionName);
   if (child) {
     child.kill();
     runningProcesses.delete(connectionName);
-    panel.webview.postMessage({
-      command: "queryError",
-      error: "Execution cancelled by user.",
-    });
   }
+  panel.webview.postMessage({
+    command: "queryError",
+    error: "Execution cancelled by user.",
+  });
 }
 
 async function executeQuery(
@@ -370,12 +563,6 @@ async function executeQuery(
       return;
     }
 
-    const pythonScript = path.join(
-      context.extensionPath,
-      "python",
-      "query_executor.py",
-    );
-
     // Re-read connection from storage to pick up any edits (e.g. envVars)
     const freshConnection = services.getConnection(connectionName) ?? connection;
 
@@ -388,28 +575,28 @@ async function executeQuery(
       return;
     }
 
-    const args = [
-      pythonScript,
-      `--connection-string=${connectionString}`,
-      `--query=${queryText}`,
-    ];
+    const proc = await getOrCreatePersistentProcess(
+      connectionName, context, freshConnection,
+    );
 
-    if (paramsRaw && paramsRaw.trim()) {
-      args.push(`--params=${paramsRaw}`);
-    }
-
-    const envVars = freshConnection.envVars;
-    if (envVars && Object.keys(envVars).length > 0) {
-      args.push(`--env-vars=${JSON.stringify(envVars)}`);
-    }
-
-    const result = await services.runPythonScript(context, args, (child) => {
+    // Track process for cancellation
+    const child = proc.getChild();
+    if (child) {
       runningProcesses.set(connectionName, child);
-    }, freshConnection.envVars);
+    }
+
+    const request: Record<string, string> = {
+      action: "query",
+      query: queryText,
+    };
+    if (paramsRaw && paramsRaw.trim()) {
+      request.params = paramsRaw;
+    }
+
+    const results = await proc.send(request);
 
     runningProcesses.delete(connectionName);
-
-    const results = JSON.parse(result);
+    services.onConnectionStateChanged(connectionName, true);
 
     saveQueryToHistory(context, connectionName, queryText, results);
 
@@ -436,6 +623,32 @@ async function executeQuery(
       error: errorText,
     });
   }
+}
+
+async function getOrCreatePersistentProcess(
+  connectionName: string,
+  context: vscode.ExtensionContext,
+  connection: DbConnection,
+): Promise<PersistentPythonProcess> {
+  const existing = persistentProcesses.get(connectionName);
+  if (existing && !existing.isDead()) {
+    return existing;
+  }
+
+  const proc = new PersistentPythonProcess(
+    connectionName,
+    context,
+    connection.connectionString || "",
+    connection.envVars,
+  );
+  persistentProcesses.set(connectionName, proc);
+  await proc.start();
+  return proc;
+}
+
+export function isConnectionActive(connectionName: string): boolean {
+  const proc = persistentProcesses.get(connectionName);
+  return !!proc && !proc.isDead();
 }
 
 function saveQueryToHistory(

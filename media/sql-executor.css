@@ -749,6 +749,13 @@ body.is-resizing {
   color: var(--vscode-testing-iconFailed, #ff8f8f);
 }
 
+.no-data-cell {
+  text-align: center;
+  padding: 24px !important;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 body.vscode-light #queryEditor .cm-keyword,
 body.vscode-high-contrast-light #queryEditor .cm-keyword {
   color: #0000ff;
