@@ -493,7 +493,7 @@ class ConnectionTreeProvider
 <defs>
 <filter id="grey"><feColorMatrix type="saturate" values="0"/></filter>
 </defs>
-<g filter="url(#grey)" opacity="0.45">
+<g filter="url(#grey)" opacity="1">
 ${innerContent}
 </g>
 <circle cx="${badgeCx}" cy="${badgeCy}" r="${badgeR}" fill="#e74c3c"/>

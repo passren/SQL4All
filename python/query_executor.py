@@ -349,10 +349,13 @@ def action_query(engine, sql_query, query_params, conn=None):
 
             if result.returns_rows:
                 columns = list(result.keys())
-                rows = [
-                    dict(row._mapping)
-                    for row in result
-                ]
+                raw_rows = result.fetchall()
+                rows = []
+                for row in raw_rows:
+                    if isinstance(row, dict):
+                        rows.append(row)
+                    else:
+                        rows.append(dict(zip(columns, row)))
                 serialized = serialize_result(rows)
                 count = len(serialized)
                 return {
