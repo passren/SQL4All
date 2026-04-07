@@ -82,7 +82,7 @@ export function formatConnectionSummary(
   return `${host}${portSegment}${databaseSegment}`;
 }
 
-function maskPasswordInUri(uri: string): string {
+export function maskPasswordInUri(uri: string): string {
   try {
     return uri.replace(
       /(:\/\/[^:/?#]+):([^@]+)@/,

@@ -96,6 +96,7 @@ def parse_arguments():
             'query', 'ping',
             'list-tables', 'list-views', 'list-materialized-views',
             'list-sequences', 'list-temp-tables', 'list-temp-views',
+            'list-columns', 'list-indexes',
         ],
         help='Action to perform',
     )
@@ -254,6 +255,84 @@ def action_list_entities(engine, action, conn=None):
         ) from e
 
 
+def action_list_columns(engine, table_name, conn=None):
+    """List column details for a table via SQLAlchemy inspect."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        inspector = sa_inspect(conn if conn is not None else engine)
+        columns = inspector.get_columns(table_name)
+        rows = []
+        for col in columns:
+            rows.append({
+                'column_name': col['name'],
+                'type': str(col['type']),
+                'nullable': col.get('nullable', True),
+                'default': (
+                    str(col['default'])
+                    if col.get('default') is not None
+                    else None
+                ),
+                'autoincrement': col.get('autoincrement', False),
+                'primary_key': col.get('primary_key', False),
+            })
+        return {
+            "kind": "result-set",
+            "rows": rows,
+            "columns": [
+                'column_name', 'type', 'nullable',
+                'default', 'autoincrement', 'primary_key',
+            ],
+            "rowCount": len(rows),
+            "message": f"Found {len(rows)} column(s)",
+        }
+    except Exception as e:
+        raise Exception(
+            f"Failed to list columns: {e}"
+        ) from e
+
+
+def action_list_indexes(engine, table_name, conn=None):
+    """List index details for a table via SQLAlchemy inspect."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        inspector = sa_inspect(conn if conn is not None else engine)
+        # Get regular indexes
+        indexes = inspector.get_indexes(table_name)
+        # Get primary key constraint
+        try:
+            pk = inspector.get_pk_constraint(table_name)
+            if pk and pk.get('constrained_columns'):
+                indexes = [{
+                    'name': pk.get('name') or 'PRIMARY',
+                    'column_names': pk['constrained_columns'],
+                    'unique': True,
+                    'primary_key': True,
+                }] + indexes
+        except Exception:
+            pass
+        rows = []
+        for idx in indexes:
+            rows.append({
+                'index_name': idx.get('name') or '(unnamed)',
+                'columns': ', '.join(
+                    str(c) for c in idx.get('column_names', []) if c
+                ),
+                'unique': idx.get('unique', False),
+                'primary_key': idx.get('primary_key', False),
+            })
+        return {
+            "kind": "result-set",
+            "rows": rows,
+            "columns": ['index_name', 'columns', 'unique', 'primary_key'],
+            "rowCount": len(rows),
+            "message": f"Found {len(rows)} index(es)",
+        }
+    except Exception as e:
+        raise Exception(
+            f"Failed to list indexes: {e}"
+        ) from e
+
+
 def action_query(engine, sql_query, query_params, conn=None):
     """Execute a SQL query and return results."""
     try:
@@ -320,6 +399,14 @@ def dispatch_action(engine, action, query='', params_raw='', conn=None):
         result = action_ping(engine)
     elif action in ENTITY_ACTIONS:
         result = action_list_entities(engine, action, conn)
+    elif action == 'list-columns':
+        if not query or not query.strip():
+            raise ValueError('Table name is required for list-columns.')
+        result = action_list_columns(engine, query.strip(), conn)
+    elif action == 'list-indexes':
+        if not query or not query.strip():
+            raise ValueError('Table name is required for list-indexes.')
+        result = action_list_indexes(engine, query.strip(), conn)
     elif action == 'query':
         if not query or not query.strip():
             raise ValueError('Query is empty.')

@@ -7,6 +7,7 @@ import {
   ConnectionStore,
   normalizeConnection,
   formatConnectionSummary,
+  maskPasswordInUri,
   EXTENSION_NAMESPACE,
   BRAND_NAME,
   CONNECTION_VIEW_ID,
@@ -44,7 +45,7 @@ let pythonEnvPath: string | undefined;
 let pythonSetupPromise: Promise<string> | undefined;
 let pythonStatusBar: vscode.StatusBarItem | undefined;
 
-type TreeItem = FolderItem | ConnectionItem | EntityCategoryItem | EntityItem;
+type TreeItem = FolderItem | ConnectionItem | EntityCategoryItem | EntityItem | TableSubCategoryItem | ColumnItem | IndexItem;
 
 const CONNECTION_DRAG_MIME = `application/vnd.code.tree.${CONNECTION_VIEW_ID}`;
 
@@ -113,15 +114,83 @@ class EntityCategoryItem extends vscode.TreeItem {
   }
 }
 
+const EXPANDABLE_CATEGORIES = new Set<EntityCategory>(["tables", "views", "materialized-views", "temp-tables", "temp-views"]);
+
 class EntityItem extends vscode.TreeItem {
   constructor(
     public readonly entityName: string,
     public readonly parentConnectionName: string,
     public readonly categoryType: EntityCategory,
   ) {
-    super(entityName, vscode.TreeItemCollapsibleState.None);
+    super(
+      entityName,
+      EXPANDABLE_CATEGORIES.has(categoryType)
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None,
+    );
     this.contextValue = TABLE_ITEM_CONTEXT;
     this.iconPath = new vscode.ThemeIcon("symbol-field");
+  }
+}
+
+type TableSubCategory = "columns" | "indexes";
+
+class TableSubCategoryItem extends vscode.TreeItem {
+  constructor(
+    public readonly subType: TableSubCategory,
+    public readonly parentEntityName: string,
+    public readonly parentConnectionName: string,
+  ) {
+    super(
+      subType === "columns" ? "Columns" : "Indexes",
+      vscode.TreeItemCollapsibleState.Collapsed,
+    );
+    this.contextValue = CATEGORY_ITEM_CONTEXT;
+    this.iconPath = new vscode.ThemeIcon(
+      subType === "columns" ? "symbol-constant" : "symbol-key",
+    );
+  }
+}
+
+class ColumnItem extends vscode.TreeItem {
+  constructor(
+    public readonly columnName: string,
+    public readonly parentEntityName: string,
+    public readonly parentConnectionName: string,
+    columnType: string,
+    nullable: boolean,
+    primaryKey: boolean,
+  ) {
+    super(columnName, vscode.TreeItemCollapsibleState.None);
+    const tags: string[] = [];
+    if (primaryKey) { tags.push("PK"); }
+    if (!nullable) { tags.push("NOT NULL"); }
+    this.description = `${columnType}${tags.length > 0 ? "  " + tags.join(", ") : ""}`;
+    this.contextValue = TABLE_ITEM_CONTEXT;
+    this.iconPath = new vscode.ThemeIcon(
+      primaryKey ? "symbol-key" : "symbol-constant",
+    );
+  }
+}
+
+class IndexItem extends vscode.TreeItem {
+  constructor(
+    public readonly indexName: string,
+    public readonly parentEntityName: string,
+    public readonly parentConnectionName: string,
+    columns: string,
+    unique: boolean,
+    primaryKey: boolean,
+  ) {
+    super(indexName, vscode.TreeItemCollapsibleState.None);
+    const tags: string[] = [];
+    if (primaryKey) { tags.push("PK"); }
+    if (unique && !primaryKey) { tags.push("UNIQUE"); }
+    this.description = `(${columns})${tags.length > 0 ? "  " + tags.join(", ") : ""}`;
+    this.contextValue = TABLE_ITEM_CONTEXT;
+    this.iconPath = new vscode.ThemeIcon(
+      primaryKey ? "symbol-key" : "symbol-ruler",
+    );
   }
 }
 
@@ -143,6 +212,7 @@ class ConnectionTreeProvider
   private cachedFolders: FolderItem[] = [];
   private cachedItemsByFolder = new Map<string, ConnectionItem[]>();
   private entityCache = new Map<string, EntityItem[]>();
+  private tableDetailCache = new Map<string, (ColumnItem | IndexItem)[]>();
   private categoriesByConnection = new Map<string, EntityCategoryItem[]>();
   private cachedConnections: ConnectionStore | undefined;
 
@@ -154,6 +224,7 @@ class ConnectionTreeProvider
     this.cachedFolders = [];
     this.cachedItemsByFolder.clear();
     this.entityCache.clear();
+    this.tableDetailCache.clear();
     this.categoriesByConnection.clear();
     this.cachedConnections = undefined;
     this._onDidChangeTreeData.fire();
@@ -255,10 +326,26 @@ class ConnectionTreeProvider
       return this.fetchEntityItems(element);
     }
 
+    if (element instanceof EntityItem) {
+      return this.getTableSubCategories(element);
+    }
+
+    if (element instanceof TableSubCategoryItem) {
+      return this.fetchTableDetails(element);
+    }
+
     return [];
   }
 
   getParent(element: TreeItem): vscode.ProviderResult<TreeItem> {
+    if (element instanceof ColumnItem || element instanceof IndexItem) {
+      return undefined; // sub-category parent lookup not needed for reveal
+    }
+    if (element instanceof TableSubCategoryItem) {
+      const cacheKey = `${element.parentConnectionName}:tables`;
+      const entities = this.entityCache.get(cacheKey);
+      return entities?.find((e) => e.entityName === element.parentEntityName);
+    }
     if (element instanceof EntityItem) {
       const categories = this.categoriesByConnection.get(element.parentConnectionName);
       return categories?.find(
@@ -312,6 +399,12 @@ class ConnectionTreeProvider
   private clearEntityCache(connectionName: string): void {
     for (const cat of ENTITY_CATEGORIES) {
       this.entityCache.delete(`${connectionName}:${cat.type}`);
+    }
+    // Clear all table detail caches (columns/indexes) for this connection
+    for (const key of this.tableDetailCache.keys()) {
+      if (key.startsWith(`${connectionName}:`)) {
+        this.tableDetailCache.delete(key);
+      }
     }
     this.categoriesByConnection.delete(connectionName);
   }
@@ -623,6 +716,78 @@ ${innerContent}
       // Update category description with count
       category.description = `${items.length}`;
 
+      return items;
+    } catch {
+      return [];
+    }
+  }
+
+  private getTableSubCategories(parent: EntityItem): TableSubCategoryItem[] {
+    if (!EXPANDABLE_CATEGORIES.has(parent.categoryType)) {
+      return [];
+    }
+    return [
+      new TableSubCategoryItem("columns", parent.entityName, parent.parentConnectionName),
+      new TableSubCategoryItem("indexes", parent.entityName, parent.parentConnectionName),
+    ];
+  }
+
+  private async fetchTableDetails(sub: TableSubCategoryItem): Promise<(ColumnItem | IndexItem)[]> {
+    const cacheKey = `${sub.parentConnectionName}:${sub.parentEntityName}:${sub.subType}`;
+    const cached = this.tableDetailCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const connection = this.getConnection(sub.parentConnectionName);
+      if (!connection) { return []; }
+
+      const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
+      const action = sub.subType === "columns" ? "list-columns" : "list-indexes";
+      const envVars = connection.envVars;
+      const args = [
+        pythonScript,
+        `--connection-string=${connection.connectionString || ""}`,
+        `--action=${action}`,
+        `--query=${sub.parentEntityName}`,
+      ];
+
+      if (envVars && Object.keys(envVars).length > 0) {
+        args.push(`--env-vars=${JSON.stringify(envVars)}`);
+      }
+
+      const result = await runPythonScript(this.context, args, undefined, envVars);
+      const parsed = JSON.parse(result);
+      const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
+
+      let items: (ColumnItem | IndexItem)[];
+      if (sub.subType === "columns") {
+        items = rows.map(
+          (row: any) => new ColumnItem(
+            row.column_name ?? row.name ?? "",
+            sub.parentEntityName,
+            sub.parentConnectionName,
+            row.type ?? "",
+            row.nullable ?? true,
+            row.primary_key ?? false,
+          ),
+        );
+      } else {
+        items = rows.map(
+          (row: any) => new IndexItem(
+            row.index_name ?? row.name ?? "",
+            sub.parentEntityName,
+            sub.parentConnectionName,
+            row.columns ?? "",
+            row.unique ?? false,
+            row.primary_key ?? false,
+          ),
+        );
+      }
+
+      this.tableDetailCache.set(cacheKey, items);
+      sub.description = `${items.length}`;
       return items;
     } catch {
       return [];
@@ -979,13 +1144,21 @@ export function activate(context: vscode.ExtensionContext) {
 
   const copyTableNameDisposable = vscode.commands.registerCommand(
     `${EXTENSION_NAMESPACE}.copyTableName`,
-    async (item?: EntityItem) => {
-      if (!item?.entityName) {
+    async (item?: EntityItem | ColumnItem | IndexItem) => {
+      let name: string | undefined;
+      if (item instanceof EntityItem) {
+        name = item.entityName;
+      } else if (item instanceof ColumnItem) {
+        name = item.columnName;
+      } else if (item instanceof IndexItem) {
+        name = item.indexName;
+      }
+      if (!name) {
         return;
       }
-      await vscode.env.clipboard.writeText(item.entityName);
+      await vscode.env.clipboard.writeText(name);
       vscode.window.setStatusBarMessage(
-        `Copied: ${item.entityName}`,
+        `Copied: ${name}`,
         2000,
       );
     },
@@ -1247,6 +1420,16 @@ async function exportConnections(provider: ConnectionTreeProvider): Promise<void
     return;
   }
 
+  const proceed = await vscode.window.showWarningMessage(
+    "Passwords will not be included in the exported file. You will need to re-enter them after importing.",
+    { modal: true },
+    "Continue",
+  );
+
+  if (proceed !== "Continue") {
+    return;
+  }
+
   const uri = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file("sql4all-connections.json"),
     filters: { "JSON Files": ["json"] },
@@ -1261,7 +1444,13 @@ async function exportConnections(provider: ConnectionTreeProvider): Promise<void
   const folderAssignments: Record<string, string> = {};
   for (const item of selected) {
     const name = (item as any).connectionName as string;
-    exportData[name] = connections[name];
+    const conn = { ...connections[name] };
+    // Remove password from exported data
+    conn.password = "";
+    if (conn.connectionString) {
+      conn.connectionString = maskPasswordInUri(conn.connectionString);
+    }
+    exportData[name] = conn;
     if (assignments[name]) {
       folderAssignments[name] = assignments[name];
     }
