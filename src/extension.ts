@@ -66,7 +66,7 @@ class FolderItem extends vscode.TreeItem {
   ) {
     super(folderName, vscode.TreeItemCollapsibleState.Expanded);
     this.contextValue = FOLDER_ITEM_CONTEXT;
-    this.iconPath = new vscode.ThemeIcon("folder");
+    this.iconPath = new vscode.ThemeIcon("folder-opened", new vscode.ThemeColor("symbolIcon.folderForeground"));
   }
 }
 
@@ -209,6 +209,7 @@ class ConnectionTreeProvider
   private readonly iconsByDbType = new Map<string, vscode.Uri>();
   private readonly disconnectedIconsByDbType = new Map<string, vscode.Uri>();
   private readonly connectedConnections = new Set<string>();
+  private readonly expandedFolders = new Set<string>();
   private cachedFolders: FolderItem[] = [];
   private cachedItemsByFolder = new Map<string, ConnectionItem[]>();
   private entityCache = new Map<string, EntityItem[]>();
@@ -231,7 +232,28 @@ class ConnectionTreeProvider
   }
 
   getTreeItem(element: TreeItem): vscode.TreeItem {
+    if (element instanceof FolderItem) {
+      const expanded = this.expandedFolders.has(element.folderName);
+      element.iconPath = new vscode.ThemeIcon(
+        expanded ? "folder-opened" : "folder",
+        new vscode.ThemeColor("symbolIcon.folderForeground"),
+      );
+    }
     return element;
+  }
+
+  onDidExpand(element: TreeItem): void {
+    if (element instanceof FolderItem) {
+      this.expandedFolders.add(element.folderName);
+      this._onDidChangeTreeData.fire(element);
+    }
+  }
+
+  onDidCollapse(element: TreeItem): void {
+    if (element instanceof FolderItem) {
+      this.expandedFolders.delete(element.folderName);
+      this._onDidChangeTreeData.fire(element);
+    }
   }
 
   resolveTreeItem(
@@ -283,7 +305,10 @@ class ConnectionTreeProvider
         groups.get(folder)!.push(name);
       }
 
-      this.cachedFolders = folders.map((f) => new FolderItem(f));
+      this.cachedFolders = folders.map((f) => {
+        this.expandedFolders.add(f);
+        return new FolderItem(f);
+      });
 
       for (const folderName of folders) {
         const connNames = groups.get(folderName)!;
@@ -983,6 +1008,8 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: connectionTreeProvider,
     dragAndDropController: connectionTreeProvider,
   });
+  connectionTreeView.onDidExpandElement(e => connectionTreeProvider.onDidExpand(e.element));
+  connectionTreeView.onDidCollapseElement(e => connectionTreeProvider.onDidCollapse(e.element));
   context.subscriptions.push(connectionTreeView);
 
   initSqlExecutor({

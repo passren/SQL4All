@@ -171,6 +171,16 @@ class PersistentPythonProcess {
     });
   }
 
+  cancelPending(): boolean {
+    if (this.pendingReject) {
+      this.pendingReject(new Error("Execution cancelled by user."));
+      this.pendingResolve = null;
+      this.pendingReject = null;
+      return true;
+    }
+    return false;
+  }
+
   getChild(): ChildProcess | null {
     return this.child;
   }
@@ -540,9 +550,13 @@ function cancelRunningQuery(
   panel: vscode.WebviewPanel,
 ): void {
   const proc = persistentProcesses.get(connectionName);
-  if (proc) {
-    proc.kill();
+  if (proc && proc.cancelPending()) {
+    // Pending request was rejected; the process stays alive for future queries.
+    // The Python side will finish the query and send a response, which will be
+    // silently discarded since there is no pending resolve/reject.
+    return;
   }
+  // Fallback for non-persistent (single-shot) processes
   const child = runningProcesses.get(connectionName);
   if (child) {
     child.kill();
