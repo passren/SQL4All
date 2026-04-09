@@ -3,7 +3,7 @@
   "displayName": "SQL For ALL",
   "publisher": "sql4all",
   "description": "Query SQL/NoSQL Databases using SQL — backed by SQLAlchemy",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "license": "MIT",
   "engines": {
     "vscode": "^1.110.0"
@@ -150,6 +150,17 @@
         "title": "Delete Folder...",
         "category": "SQL4ALL",
         "icon": "$(trash)"
+      },
+      {
+        "command": "sql4all.runTool",
+        "title": "Run Tool",
+        "category": "SQL4ALL"
+      },
+      {
+        "command": "sql4all.refreshToolbox",
+        "title": "Refresh Toolbox",
+        "category": "SQL4ALL",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -167,6 +178,12 @@
           "id": "sql4all.connections",
           "name": "Connections",
           "icon": "$(database)",
+          "when": "true"
+        },
+        {
+          "id": "sql4all.toolbox",
+          "name": "Toolbox",
+          "icon": "$(tools)",
           "when": "true"
         }
       ]
@@ -192,6 +209,11 @@
           "command": "sql4all.exportConnections",
           "when": "view == sql4all.connections",
           "group": "navigation@4"
+        },
+        {
+          "command": "sql4all.refreshToolbox",
+          "when": "view == sql4all.toolbox",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [

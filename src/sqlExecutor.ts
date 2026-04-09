@@ -38,6 +38,7 @@ class PersistentPythonProcess {
   private ready = false;
   private readyPromise: Promise<void> | null = null;
   private dead = false;
+  private discardNextResponse = false;
 
   constructor(
     private readonly connectionName: string,
@@ -133,6 +134,13 @@ class PersistentPythonProcess {
     while (lines.length > 1) {
       const line = lines.shift()!;
       if (!line.trim()) { continue; }
+      // After a cancel, the Python side still finishes its query and
+      // writes a response.  Discard that stale response so the next
+      // real request does not receive it.
+      if (this.discardNextResponse) {
+        this.discardNextResponse = false;
+        continue;
+      }
       if (this.pendingResolve) {
         this.pendingResolve(line);
         this.pendingResolve = null;
@@ -176,6 +184,9 @@ class PersistentPythonProcess {
       this.pendingReject(new Error("Execution cancelled by user."));
       this.pendingResolve = null;
       this.pendingReject = null;
+      // The Python process will still finish the query and write a
+      // response.  Flag it so processBuffer discards the stale line.
+      this.discardNextResponse = true;
       return true;
     }
     return false;
@@ -666,6 +677,20 @@ async function getOrCreatePersistentProcess(
   persistentProcesses.set(connectionName, proc);
   await proc.start();
   return proc;
+}
+
+/**
+ * Send a request through the persistent process for a connection.
+ * Creates the process if it doesn't exist yet.
+ */
+export async function sendToPersistentProcess(
+  connectionName: string,
+  context: vscode.ExtensionContext,
+  connection: DbConnection,
+  request: Record<string, string>,
+): Promise<any> {
+  const proc = await getOrCreatePersistentProcess(connectionName, context, connection);
+  return proc.send(request);
 }
 
 export function isConnectionActive(connectionName: string): boolean {

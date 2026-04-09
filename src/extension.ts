@@ -34,7 +34,13 @@ import {
   createOrShowPanel,
   removeConnectionState,
   killPersistentProcess,
+  sendToPersistentProcess,
 } from "./sqlExecutor";
+import {
+  TOOLBOX_VIEW_ID,
+  ToolboxTreeProvider,
+  registerToolboxCommands,
+} from "./toolbox";
 
 declare const process: any;
 
@@ -613,22 +619,12 @@ ${innerContent}
       },
       async () => {
         try {
-          const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
-          const envVars = connection.envVars;
-          const args = [
-            pythonScript,
-            `--connection-string=${connection.connectionString || ""}`,
-            `--action=list-tables`,
-          ];
+          const result = await sendToPersistentProcess(
+            connectionName, this.context, connection,
+            { action: "list-tables" },
+          );
 
-          if (envVars && Object.keys(envVars).length > 0) {
-            args.push(`--env-vars=${JSON.stringify(envVars)}`);
-          }
-
-          const result = await runPythonScript(this.context, args, undefined, envVars);
-          const parsed = JSON.parse(result);
-
-          const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
+          const rows: any[] = Array.isArray(result) ? result : result?.rows ?? result?.data ?? [];
           const tableNames: string[] = rows
             .map((row: any) => {
               if (typeof row === "string") { return row; }
@@ -706,22 +702,12 @@ ${innerContent}
       const connection = this.getConnection(category.parentConnectionName);
       if (!connection) { return []; }
 
-      const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
-      const envVars = connection.envVars;
-      const args = [
-        pythonScript,
-        `--connection-string=${connection.connectionString || ""}`,
-        `--action=${category.action}`,
-      ];
+      const result = await sendToPersistentProcess(
+        category.parentConnectionName, this.context, connection,
+        { action: category.action },
+      );
 
-      if (envVars && Object.keys(envVars).length > 0) {
-        args.push(`--env-vars=${JSON.stringify(envVars)}`);
-      }
-
-      const result = await runPythonScript(this.context, args, undefined, envVars);
-      const parsed = JSON.parse(result);
-
-      const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
+      const rows: any[] = Array.isArray(result) ? result : result?.rows ?? result?.data ?? [];
       const names: string[] = rows
         .map((row: any) => {
           if (typeof row === "string") { return row; }
@@ -768,23 +754,14 @@ ${innerContent}
       const connection = this.getConnection(sub.parentConnectionName);
       if (!connection) { return []; }
 
-      const pythonScript = path.join(this.context.extensionPath, "python", "query_executor.py");
       const action = sub.subType === "columns" ? "list-columns" : "list-indexes";
-      const envVars = connection.envVars;
-      const args = [
-        pythonScript,
-        `--connection-string=${connection.connectionString || ""}`,
-        `--action=${action}`,
-        `--query=${sub.parentEntityName}`,
-      ];
 
-      if (envVars && Object.keys(envVars).length > 0) {
-        args.push(`--env-vars=${JSON.stringify(envVars)}`);
-      }
+      const result = await sendToPersistentProcess(
+        sub.parentConnectionName, this.context, connection,
+        { action, query: sub.parentEntityName },
+      );
 
-      const result = await runPythonScript(this.context, args, undefined, envVars);
-      const parsed = JSON.parse(result);
-      const rows: any[] = Array.isArray(parsed) ? parsed : parsed?.rows ?? parsed?.data ?? [];
+      const rows: any[] = Array.isArray(result) ? result : result?.rows ?? result?.data ?? [];
 
       let items: (ColumnItem | IndexItem)[];
       if (sub.subType === "columns") {
@@ -1011,6 +988,14 @@ export function activate(context: vscode.ExtensionContext) {
   connectionTreeView.onDidExpandElement(e => connectionTreeProvider.onDidExpand(e.element));
   connectionTreeView.onDidCollapseElement(e => connectionTreeProvider.onDidCollapse(e.element));
   context.subscriptions.push(connectionTreeView);
+
+  // Toolbox tree view
+  const toolboxProvider = new ToolboxTreeProvider();
+  const toolboxTreeView = vscode.window.createTreeView(TOOLBOX_VIEW_ID, {
+    treeDataProvider: toolboxProvider,
+  });
+  context.subscriptions.push(toolboxTreeView);
+  registerToolboxCommands(context, toolboxProvider);
 
   initSqlExecutor({
     panelsByConnection,
