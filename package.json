@@ -3,7 +3,7 @@
   "displayName": "SQL For ALL",
   "publisher": "sql4all",
   "description": "Query SQL/NoSQL Databases using SQL — backed by SQLAlchemy",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "license": "MIT",
   "engines": {
     "vscode": "^1.110.0"

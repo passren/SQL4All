@@ -259,6 +259,7 @@ export function createOrShowPanel(
   panel.onDidChangeViewState(() => {
     if (panel.active) {
       services.revealConnection(connectionName);
+      panel.webview.postMessage({ command: "focusEditor" });
     }
   });
 
@@ -514,6 +515,7 @@ async function handleWebviewMessage(
       await executeQuery(
         message.query,
         message.paramsRaw,
+        message.fetchSize,
         connectionName,
         connection,
         context,
@@ -534,6 +536,9 @@ async function handleWebviewMessage(
       break;
     case "cancelQuery":
       cancelRunningQuery(connectionName, panel);
+      break;
+    case "fetchMore":
+      await fetchMoreRows(connectionName, connection, context, panel);
       break;
     case "exportResults":
       exportResults(message.data, message.format);
@@ -582,6 +587,7 @@ function cancelRunningQuery(
 async function executeQuery(
   queryText: string,
   paramsRaw: string | undefined,
+  fetchSize: number | null | undefined,
   connectionName: string,
   connection: DbConnection,
   context: vscode.ExtensionContext,
@@ -618,12 +624,15 @@ async function executeQuery(
       runningProcesses.set(connectionName, child);
     }
 
-    const request: Record<string, string> = {
+    const request: Record<string, string | number> = {
       action: "query",
       query: queryText,
     };
     if (paramsRaw && paramsRaw.trim()) {
       request.params = paramsRaw;
+    }
+    if (typeof fetchSize === "number" && fetchSize > 0) {
+      request.fetchSize = fetchSize;
     }
 
     const results = await proc.send(request);
@@ -653,6 +662,46 @@ async function executeQuery(
     }
     panel.webview.postMessage({
       command: "queryError",
+      error: errorText,
+    });
+  }
+}
+
+async function fetchMoreRows(
+  connectionName: string,
+  connection: DbConnection,
+  context: vscode.ExtensionContext,
+  panel: vscode.WebviewPanel,
+): Promise<void> {
+  try {
+    const freshConnection = services.getConnection(connectionName) ?? connection;
+    const proc = await getOrCreatePersistentProcess(
+      connectionName, context, freshConnection,
+    );
+
+    const request: Record<string, string> = {
+      action: "fetch-more",
+    };
+
+    const results = await proc.send(request);
+
+    panel.webview.postMessage({
+      command: "fetchMoreResults",
+      data: results,
+    });
+  } catch (error: any) {
+    let errorText = error.message || "Fetch more failed.";
+    try {
+      const parsed = JSON.parse(errorText);
+      if (parsed && typeof parsed.error === "string") {
+        errorText = parsed.error;
+      }
+    } catch {
+      // not JSON, use as-is
+    }
+    panel.webview.postMessage({
+      command: "fetchMoreResults",
+      data: { kind: "result-set", rows: [], columns: [], rowCount: 0, hasMore: false },
       error: errorText,
     });
   }

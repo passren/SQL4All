@@ -333,7 +333,7 @@ def action_list_indexes(engine, table_name, conn=None):
         ) from e
 
 
-def action_query(engine, sql_query, query_params, conn=None):
+def action_query(engine, sql_query, query_params, conn=None, fetch_size=None, result_holder=None):
     """Execute a SQL query and return results."""
     try:
         from sqlalchemy import text
@@ -349,7 +349,12 @@ def action_query(engine, sql_query, query_params, conn=None):
 
             if result.returns_rows:
                 columns = list(result.keys())
-                raw_rows = result.fetchall()
+                if fetch_size and fetch_size > 0:
+                    raw_rows = result.fetchmany(fetch_size)
+                    has_more = len(raw_rows) == fetch_size
+                else:
+                    raw_rows = result.fetchall()
+                    has_more = False
                 rows = []
                 for row in raw_rows:
                     if isinstance(row, dict):
@@ -358,11 +363,21 @@ def action_query(engine, sql_query, query_params, conn=None):
                         rows.append(dict(zip(columns, row)))
                 serialized = serialize_result(rows)
                 count = len(serialized)
+
+                # Store cursor for incremental fetching
+                if has_more and result_holder is not None:
+                    result_holder['result'] = result
+                    result_holder['columns'] = columns
+                    result_holder['fetch_size'] = fetch_size
+                else:
+                    result_holder_clear(result_holder)
+
                 return {
                     "kind": "result-set",
                     "rows": serialized,
                     "columns": columns,
                     "rowCount": count,
+                    "hasMore": has_more,
                     "message": (
                         f"Returned {count} row(s)"
                     ),
@@ -394,11 +409,67 @@ def action_query(engine, sql_query, query_params, conn=None):
         ) from e
 
 
-def dispatch_action(engine, action, query='', params_raw='', conn=None):
+def result_holder_clear(holder):
+    """Clear the stored cursor from a result holder."""
+    if holder is not None:
+        holder.pop('result', None)
+        holder.pop('columns', None)
+        holder.pop('fetch_size', None)
+
+
+def action_fetch_more(result_holder):
+    """Fetch the next batch from a stored cursor."""
+    if not result_holder or 'result' not in result_holder:
+        return {
+            "kind": "result-set",
+            "rows": [],
+            "columns": [],
+            "rowCount": 0,
+            "hasMore": False,
+            "message": "No active cursor to fetch from.",
+        }
+
+    result = result_holder['result']
+    columns = result_holder['columns']
+    fetch_size = result_holder.get('fetch_size', 50)
+
+    try:
+        raw_rows = result.fetchmany(fetch_size)
+        has_more = len(raw_rows) == fetch_size
+
+        rows = []
+        for row in raw_rows:
+            if isinstance(row, dict):
+                rows.append(row)
+            else:
+                rows.append(dict(zip(columns, row)))
+
+        serialized = serialize_result(rows)
+        count = len(serialized)
+
+        if not has_more:
+            result_holder_clear(result_holder)
+
+        return {
+            "kind": "result-set",
+            "rows": serialized,
+            "columns": columns,
+            "rowCount": count,
+            "hasMore": has_more,
+            "message": f"Fetched {count} more row(s)",
+        }
+    except Exception as e:
+        result_holder_clear(result_holder)
+        raise Exception(f"Fetch more failed: {e}") from e
+
+
+def dispatch_action(engine, action, query='', params_raw='', conn=None, fetch_size=None, result_holder=None):
     """Route an action to the appropriate handler and log the result."""
     logger.debug('Action: %s', action)
 
-    if action == 'ping':
+    if action == 'fetch-more':
+        result = action_fetch_more(result_holder)
+    elif action == 'ping':
         result = action_ping(engine)
     elif action in ENTITY_ACTIONS:
         result = action_list_entities(engine, action, conn)
@@ -415,7 +486,7 @@ def dispatch_action(engine, action, query='', params_raw='', conn=None):
             raise ValueError('Query is empty.')
         logger.debug('Query: %s', query)
         params = parse_query_params(params_raw)
-        result = action_query(engine, query, params, conn)
+        result = action_query(engine, query, params, conn, fetch_size=fetch_size, result_holder=result_holder)
     else:
         raise ValueError(f"Unknown action: {action}")
 
@@ -480,6 +551,7 @@ def server_loop(args):
 
         engine = create_engine(args.connection_string)
         conn = engine.connect()
+        result_holder = {}
         write_response({"kind": "ready"})
 
         for line in sys.stdin:
@@ -505,12 +577,23 @@ def server_loop(args):
                 break
 
             try:
+                fetch_size = request.get('fetchSize', None)
+                if fetch_size is not None:
+                    try:
+                        fetch_size = int(fetch_size)
+                    except (ValueError, TypeError):
+                        fetch_size = None
+                # Clear previous cursor when starting a new query
+                if action == 'query':
+                    result_holder_clear(result_holder)
                 result = dispatch_action(
                     engine,
                     action,
                     request.get('query', ''),
                     request.get('params', ''),
                     conn,
+                    fetch_size=fetch_size,
+                    result_holder=result_holder,
                 )
                 write_response(result)
             except Exception as e:

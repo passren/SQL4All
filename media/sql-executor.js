@@ -21,6 +21,9 @@ let executionHistory = []; // Session-only execution history
 const MAX_RECENT_FILES = 10;
 let savedContent = "";
 let isDirty = false;
+let hasMoreRows = false;
+let isFetchingMore = false;
+let currentColumns = [];
 
 const MIN_QUERY_PANE_HEIGHT = 80;
 const MIN_RESULTS_PANE_HEIGHT = 140;
@@ -468,7 +471,16 @@ function renderResultsTable(payload, elapsedSeconds) {
   container.innerHTML = "";
   container.appendChild(table);
 
+  if (hasMoreRows) {
+    const loadingEl = document.createElement("div");
+    loadingEl.id = "fetchMoreLoading";
+    loadingEl.className = "fetch-more-loading";
+    loadingEl.textContent = "Scroll down to load more rows...";
+    container.appendChild(loadingEl);
+  }
+
   initColumnResize(table);
+  setupInfiniteScroll(container);
 
   setResultMetrics(payload.rowCount, columns.length);
   setExportState(true);
@@ -477,6 +489,103 @@ function renderResultsTable(payload, elapsedSeconds) {
       payload.message ||
       `Showing ${payload.rowCount} document${payload.rowCount === 1 ? "" : "s"} from MongoDB.`
     } (${utils.formatElapsedSeconds(elapsedSeconds || 0)}s)`,
+    "success",
+  );
+}
+
+function setupInfiniteScroll(container) {
+  // Remove previous listener if any
+  if (container._scrollHandler) {
+    container.removeEventListener("scroll", container._scrollHandler);
+  }
+
+  const handler = () => {
+    if (!hasMoreRows || isFetchingMore) {
+      return;
+    }
+    const threshold = 50;
+    if (container.scrollHeight - container.scrollTop - container.clientHeight < threshold) {
+      isFetchingMore = true;
+      const loadingEl = document.getElementById("fetchMoreLoading");
+      if (loadingEl) {
+        loadingEl.textContent = "Loading more rows...";
+      }
+      vscode.postMessage({ command: "fetchMore" });
+    }
+  };
+
+  container._scrollHandler = handler;
+  container.addEventListener("scroll", handler);
+}
+
+function appendMoreRows(data) {
+  const utils = window.SQL4ALLExecutorUtils;
+  const container = getResultsContainer();
+  const table = container.querySelector("table.data-grid");
+  if (!table) {
+    return;
+  }
+
+  const tbody = table.querySelector("tbody");
+  if (!tbody) {
+    return;
+  }
+
+  const columns = data.columns || currentColumns;
+  const rows = data.rows || [];
+  const existingRowCount = currentResults.length;
+
+  rows.forEach((row, index) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    const globalIndex = existingRowCount + index;
+    tr.addEventListener("dblclick", () => {
+      showRowDetailModal(row, columns, globalIndex);
+    });
+
+    const rowNumber = document.createElement("td");
+    rowNumber.textContent = String(globalIndex + 1);
+    rowNumber.className = "row-number-cell";
+    tr.appendChild(rowNumber);
+
+    columns.forEach((column) => {
+      const td = document.createElement("td");
+      const formatted = utils.formatCellValue(row[column]);
+      td.textContent = formatted.text;
+      td.title = formatted.title;
+      if (formatted.className) {
+        td.classList.add(formatted.className);
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  // Update state
+  currentResults = currentResults.concat(rows);
+  hasMoreRows = !!data.hasMore;
+  isFetchingMore = false;
+
+  // Update or remove loading indicator
+  const loadingEl = document.getElementById("fetchMoreLoading");
+  if (hasMoreRows) {
+    if (loadingEl) {
+      loadingEl.textContent = "Scroll down to load more rows...";
+    }
+  } else {
+    if (loadingEl) {
+      loadingEl.remove();
+    }
+  }
+
+  // Update metrics
+  setResultMetrics(currentResults.length, columns.length);
+  renderResultsJson(currentResults);
+
+  const totalRows = currentResults.length;
+  setResultStatus(
+    `Showing ${totalRows} row${totalRows === 1 ? "" : "s"}.${hasMoreRows ? " More available." : ""}`,
     "success",
   );
 }
@@ -810,6 +919,23 @@ function setupEventListeners() {
     }
   });
 
+  // Auto-focus editor when window/tab regains focus.
+  // Use multiple strategies because webview iframe focus events are unreliable.
+  function focusSqlEditor() {
+    if (sqlEditor && !sqlEditor.hasFocus()) {
+      sqlEditor.focus();
+    }
+  }
+
+  window.addEventListener("focus", focusSqlEditor);
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+      // Small delay lets the webview fully settle before grabbing focus
+      setTimeout(focusSqlEditor, 50);
+    }
+  });
+
   // Message handler from extension
   window.addEventListener("message", handleMessage);
 
@@ -834,24 +960,14 @@ function setupEventListeners() {
   });
 }
 
-function applyLimit(query) {
-  const utils = window.SQL4ALLExecutorUtils;
+function getFetchSize() {
   const limitSelect = document.getElementById("limitSelect");
   const limitValue = limitSelect ? limitSelect.value : "";
-  if (!limitValue || !utils) {
-    return query;
+  if (!limitValue) {
+    return null;
   }
-
-  if (utils.getStatementType(query) !== "SELECT") {
-    return query;
-  }
-
-  if (utils.hasTopLevelLimit(query)) {
-    return query;
-  }
-
-  const trimmed = query.replace(/;\s*$/, "");
-  return `${trimmed} LIMIT ${limitValue}`;
+  const parsed = parseInt(limitValue, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function executeQuery() {
@@ -877,7 +993,8 @@ function executeQuery() {
     return;
   }
 
-  const query = applyLimit(rawQuery);
+  const query = rawQuery;
+  const fetchSize = getFetchSize();
 
   // Switch button to stop mode
   const executeBtn = document.getElementById("runBtn");
@@ -896,6 +1013,7 @@ function executeQuery() {
   vscode.postMessage({
     command: "executeQuery",
     query,
+    fetchSize,
   });
 }
 
@@ -915,6 +1033,9 @@ function exportResults(format) {
 function displayResults(data, elapsedSeconds, executedQuery) {
   const payload = window.SQL4ALLExecutorUtils.normalizeQueryPayload(data);
   currentResults = payload.rows;
+  currentColumns = payload.columns || [];
+  hasMoreRows = !!data.hasMore;
+  isFetchingMore = false;
   renderResultsTable(payload, elapsedSeconds);
   renderResultsJson(payload.rows);
   resetRunButton("Run");
@@ -928,6 +1049,9 @@ function handleMessage(event) {
   const message = event.data;
 
   switch (message.command) {
+    case "focusEditor":
+      setTimeout(focusSqlEditor, 50);
+      return;
     case "initConnection":
       activeConnection = message.data;
       if (typeof activeConnection.lastQuery === "string") {
@@ -978,6 +1102,14 @@ function handleMessage(event) {
         resetRunButton("Run");
         isQueryExecuting = false;
       }
+      }
+      break;
+    case "fetchMoreResults":
+      if (message.data) {
+        appendMoreRows(message.data);
+      } else {
+        hasMoreRows = false;
+        isFetchingMore = false;
       }
       break;
     case "queryError":

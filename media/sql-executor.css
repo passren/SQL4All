@@ -771,6 +771,14 @@ body.is-resizing {
   font-style: italic;
 }
 
+.fetch-more-loading {
+  text-align: center;
+  padding: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: italic;
+}
+
 body.vscode-light #queryEditor .cm-keyword,
 body.vscode-high-contrast-light #queryEditor .cm-keyword {
   color: #0000ff;
