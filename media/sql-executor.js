@@ -583,6 +583,12 @@ function appendMoreRows(data) {
   setResultMetrics(currentResults.length, columns.length);
   renderResultsJson(currentResults);
 
+  // Update the latest history entry with the new total count
+  if (executionHistory.length > 0) {
+    executionHistory[0].resultCount = currentResults.length;
+    renderExecutionHistory();
+  }
+
   const totalRows = currentResults.length;
   setResultStatus(
     `Showing ${totalRows} row${totalRows === 1 ? "" : "s"}.${hasMoreRows ? " More available." : ""}`,
