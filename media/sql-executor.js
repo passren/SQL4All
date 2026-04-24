@@ -1088,9 +1088,13 @@ function handleMessage(event) {
       const elapsedSeconds = stopExecutionStatus();
       const executedQuery = lastExecutedQuery || "";
       const category = getStatementCategoryFromQuery(executedQuery);
+      // Render table/JSON whenever the backend returned a result-set
+      // (DQL, or non-DQL statements like EXPLAIN/SHOW/DESCRIBE that also return rows).
+      const hasResultSet = message.data?.kind === "result-set"
+        && Array.isArray(message.data?.columns)
+        && message.data.columns.length > 0;
       
-      // For DQL queries, display results normally (which handles tab switching)
-      if (category === "dql") {
+      if (category === "dql" || hasResultSet) {
         displayResults(message.data, elapsedSeconds, executedQuery);
       } else {
         // For DDL/DML queries, log to history and switch to history tab
