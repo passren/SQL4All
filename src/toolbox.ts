@@ -11,9 +11,9 @@ class ToolCategoryItem extends vscode.TreeItem {
     public readonly categoryName: string,
     public readonly tools: ToolLeafItem[],
   ) {
-    super(categoryName, vscode.TreeItemCollapsibleState.Expanded);
+    super(categoryName, vscode.TreeItemCollapsibleState.Collapsed);
     this.contextValue = `${EXTENSION_NAMESPACE}.toolCategory`;
-    this.iconPath = new vscode.ThemeIcon("folder-opened");
+    this.iconPath = new vscode.ThemeIcon("folder");
   }
 }
 

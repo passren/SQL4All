@@ -70,9 +70,9 @@ class FolderItem extends vscode.TreeItem {
   constructor(
     public readonly folderName: string,
   ) {
-    super(folderName, vscode.TreeItemCollapsibleState.Expanded);
+    super(folderName, vscode.TreeItemCollapsibleState.Collapsed);
     this.contextValue = FOLDER_ITEM_CONTEXT;
-    this.iconPath = new vscode.ThemeIcon("folder-opened", new vscode.ThemeColor("symbolIcon.folderForeground"));
+    this.iconPath = new vscode.ThemeIcon("folder", new vscode.ThemeColor("symbolIcon.folderForeground"));
   }
 }
 
@@ -311,10 +311,7 @@ class ConnectionTreeProvider
         groups.get(folder)!.push(name);
       }
 
-      this.cachedFolders = folders.map((f) => {
-        this.expandedFolders.add(f);
-        return new FolderItem(f);
-      });
+      this.cachedFolders = folders.map((f) => new FolderItem(f));
 
       for (const folderName of folders) {
         const connNames = groups.get(folderName)!;
