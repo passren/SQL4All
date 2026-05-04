@@ -106,6 +106,7 @@ class ConnectionItem extends vscode.TreeItem {
 }
 
 class EntityCategoryItem extends vscode.TreeItem {
+  public readonly baseLabel: string;
   constructor(
     public readonly categoryType: EntityCategory,
     public readonly parentConnectionName: string,
@@ -115,8 +116,13 @@ class EntityCategoryItem extends vscode.TreeItem {
     public readonly action: string,
   ) {
     super(label, vscode.TreeItemCollapsibleState.Collapsed);
+    this.baseLabel = label;
     this.contextValue = CATEGORY_ITEM_CONTEXT;
     this.iconPath = new vscode.ThemeIcon(icon);
+  }
+
+  setCount(count: number): void {
+    this.label = `${this.baseLabel} (${count})`;
   }
 }
 
@@ -142,19 +148,23 @@ class EntityItem extends vscode.TreeItem {
 type TableSubCategory = "columns" | "indexes";
 
 class TableSubCategoryItem extends vscode.TreeItem {
+  public readonly baseLabel: string;
   constructor(
     public readonly subType: TableSubCategory,
     public readonly parentEntityName: string,
     public readonly parentConnectionName: string,
   ) {
-    super(
-      subType === "columns" ? "Columns" : "Indexes",
-      vscode.TreeItemCollapsibleState.Collapsed,
-    );
+    const baseLabel = subType === "columns" ? "Columns" : "Indexes";
+    super(baseLabel, vscode.TreeItemCollapsibleState.Collapsed);
+    this.baseLabel = baseLabel;
     this.contextValue = CATEGORY_ITEM_CONTEXT;
     this.iconPath = new vscode.ThemeIcon(
       subType === "columns" ? "symbol-constant" : "symbol-key",
     );
+  }
+
+  setCount(count: number): void {
+    this.label = `${this.baseLabel} (${count})`;
   }
 }
 
@@ -692,6 +702,12 @@ ${innerContent}
     const cacheKey = `${category.parentConnectionName}:${category.categoryType}`;
     const cached = this.entityCache.get(cacheKey);
     if (cached) {
+      // Cache may have been populated before this category item existed
+      // (e.g. by connectAndListTables), so refresh its label with the count.
+      if (category.label !== `${category.baseLabel} (${cached.length})`) {
+        category.setCount(cached.length);
+        this._onDidChangeTreeData.fire(category);
+      }
       return cached;
     }
 
@@ -720,9 +736,8 @@ ${innerContent}
         (name) => new EntityItem(name, category.parentConnectionName, category.categoryType),
       );
       this.entityCache.set(cacheKey, items);
-
-      // Update category description with count
-      category.description = `${items.length}`;
+      category.setCount(items.length);
+      this._onDidChangeTreeData.fire(category);
 
       return items;
     } catch {
@@ -744,6 +759,10 @@ ${innerContent}
     const cacheKey = `${sub.parentConnectionName}:${sub.parentEntityName}:${sub.subType}`;
     const cached = this.tableDetailCache.get(cacheKey);
     if (cached) {
+      if (sub.label !== `${sub.baseLabel} (${cached.length})`) {
+        sub.setCount(cached.length);
+        this._onDidChangeTreeData.fire(sub);
+      }
       return cached;
     }
 
@@ -786,7 +805,8 @@ ${innerContent}
       }
 
       this.tableDetailCache.set(cacheKey, items);
-      sub.description = `${items.length}`;
+      sub.setCount(items.length);
+      this._onDidChangeTreeData.fire(sub);
       return items;
     } catch {
       return [];

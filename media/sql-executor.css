@@ -382,6 +382,11 @@ body.is-resizing {
   background: var(--vscode-editor-lineHighlightBackground, #2a2d2e);
 }
 
+#queryEditor .CodeMirror-activeline-gutter {
+  background: var(--vscode-editorLineNumber-activeForeground, transparent);
+  background: var(--vscode-editor-lineHighlightBackground, #2a2d2e);
+}
+
 #queryEditor .cm-keyword {
   color: #569cd6;
 }

@@ -760,6 +760,24 @@ document.addEventListener("DOMContentLoaded", () => {
     },
   });
   sqlEditor.on("contextmenu", (cm, e) => e.preventDefault());
+
+  // Highlight the line where the cursor currently is.
+  let activeLineHandle = null;
+  const updateActiveLine = (cm) => {
+    const lineNum = cm.getCursor().line;
+    const handle = cm.getLineHandle(lineNum);
+    if (activeLineHandle === handle) { return; }
+    if (activeLineHandle) {
+      cm.removeLineClass(activeLineHandle, "background", "CodeMirror-activeline-background");
+      cm.removeLineClass(activeLineHandle, "gutter", "CodeMirror-activeline-gutter");
+    }
+    cm.addLineClass(handle, "background", "CodeMirror-activeline-background");
+    cm.addLineClass(handle, "gutter", "CodeMirror-activeline-gutter");
+    activeLineHandle = handle;
+  };
+  sqlEditor.on("cursorActivity", updateActiveLine);
+  updateActiveLine(sqlEditor);
+
   setTimeout(() => sqlEditor.refresh(), 0);
   const saved = vscode.getState();
   if (saved && saved.query) {
