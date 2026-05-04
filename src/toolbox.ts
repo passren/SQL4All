@@ -215,7 +215,7 @@ async function runAwsSsoLogin(): Promise<void> {
 async function runSsoLoginInTerminal(profile: string): Promise<void> {
   const terminal = vscode.window.createTerminal({ name: `AWS SSO: ${profile}` });
   terminal.show();
-  terminal.sendText(`aws sso login --profile ${profile}`);
+  terminal.sendText(`aws sso login --profile ${profile} --use-device-code`);
 }
 
 // ── SSO profile configuration ──────────────────────────────────────
