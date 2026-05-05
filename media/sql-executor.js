@@ -7,6 +7,13 @@ let sqlEditor = null;
 let paneLayout = {
   queryPaneHeight: null,
 };
+// The user's intended pane height (set via drag, restored from state, or via
+// initConnection). This is the source of truth — `paneLayout.queryPaneHeight`
+// holds whatever was actually applied (may be clamped) and is what gets
+// persisted, but `intendedQueryPaneHeight` is what we re-apply on every
+// reflow so transient bad measurements (e.g. hidden webview) cannot
+// permanently shrink it.
+let intendedQueryPaneHeight = null;
 let draftSaveTimer = null;
 let paneHeightSyncTimer = null;
 let lastSentPaneHeight = null;
@@ -636,21 +643,36 @@ function setupPaneResizer(initialHeight) {
     return Math.min(Math.max(height, MIN_QUERY_PANE_HEIGHT), maxQueryHeight);
   };
 
-  const applyQueryHeight = (height) => {
+  // Apply the layout, but never lose the user's intended height because
+  // of a transient zero-size container (webview hidden) or other invalid
+  // measurement. The intent is preserved separately and re-applied later.
+  const applyQueryHeight = (height, fromUser) => {
+    if (typeof height !== "number" || !Number.isFinite(height)) {
+      return;
+    }
+    if (fromUser) {
+      intendedQueryPaneHeight = height;
+    }
+    if (container.clientHeight <= 0) {
+      // Webview hidden – cannot measure. Try again later.
+      return;
+    }
     const clampedHeight = clampQueryHeight(height);
     queryPane.style.flex = `0 0 ${clampedHeight}px`;
     paneLayout.queryPaneHeight = clampedHeight;
   };
 
-  applySavedPaneHeight = applyQueryHeight;
+  // Public hook used by the extension message handler.
+  applySavedPaneHeight = (height) => applyQueryHeight(height, true);
 
   const resetQueryHeight = () => {
     queryPane.style.flex = "";
     paneLayout.queryPaneHeight = null;
+    intendedQueryPaneHeight = null;
   };
 
   if (typeof initialHeight === "number" && Number.isFinite(initialHeight)) {
-    applyQueryHeight(initialHeight);
+    applyQueryHeight(initialHeight, true);
   }
 
   let isDragging = false;
@@ -692,7 +714,7 @@ function setupPaneResizer(initialHeight) {
     }
 
     const deltaY = event.clientY - dragStartY;
-    applyQueryHeight(dragStartHeight + deltaY);
+    applyQueryHeight(dragStartHeight + deltaY, true);
   });
 
   divider.addEventListener("pointerup", stopDragging);
@@ -703,11 +725,35 @@ function setupPaneResizer(initialHeight) {
     resetQueryHeight();
   });
 
+  // When the window resizes, re-clamp using the intended height so the user
+  // intent is preserved if the available space changes.
   window.addEventListener("resize", () => {
-    if (typeof paneLayout.queryPaneHeight === "number") {
-      applyQueryHeight(paneLayout.queryPaneHeight);
+    if (typeof intendedQueryPaneHeight === "number") {
+      applyQueryHeight(intendedQueryPaneHeight, false);
     }
   });
+
+  // Re-apply the layout whenever the container regains size (e.g. the
+  // webview iframe was hidden via display:none and is now visible again).
+  // Without this, a hidden->shown transition does not fire `resize`, and
+  // CodeMirror/flex measurements taken during the hidden phase can leave
+  // the query pane at the minimum height.
+  if (typeof ResizeObserver === "function") {
+    let lastHeight = container.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const h = container.clientHeight;
+      if (h > 0 && h !== lastHeight) {
+        lastHeight = h;
+        if (typeof intendedQueryPaneHeight === "number") {
+          applyQueryHeight(intendedQueryPaneHeight, false);
+        }
+        if (sqlEditor) {
+          sqlEditor.refresh();
+        }
+      }
+    });
+    observer.observe(container);
+  }
 }
 
 function syncPaneLayoutToExtension() {
@@ -951,12 +997,28 @@ function setupEventListeners() {
     }
   }
 
-  window.addEventListener("focus", focusSqlEditor);
+  // CodeMirror caches its viewport dimensions. When the webview iframe is
+  // hidden (display:none) and shown again, CodeMirror keeps the stale 0-size
+  // measurements until refresh() is called, which makes the editor appear
+  // collapsed even though the surrounding pane has its proper size.
+  function refreshSqlEditor() {
+    if (sqlEditor) {
+      sqlEditor.refresh();
+    }
+  }
+
+  window.addEventListener("focus", () => {
+    refreshSqlEditor();
+    focusSqlEditor();
+  });
 
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) {
-      // Small delay lets the webview fully settle before grabbing focus
-      setTimeout(focusSqlEditor, 50);
+      // Small delay lets the webview fully settle before measuring/focusing
+      setTimeout(() => {
+        refreshSqlEditor();
+        focusSqlEditor();
+      }, 50);
     }
   });
 
@@ -1074,7 +1136,14 @@ function handleMessage(event) {
 
   switch (message.command) {
     case "focusEditor":
-      setTimeout(focusSqlEditor, 50);
+      setTimeout(() => {
+        if (sqlEditor) {
+          sqlEditor.refresh();
+          if (!sqlEditor.hasFocus()) {
+            sqlEditor.focus();
+          }
+        }
+      }, 50);
       return;
     case "initConnection":
       activeConnection = message.data;
@@ -1232,6 +1301,7 @@ if (state) {
     Number.isFinite(state.queryPaneHeight)
   ) {
     paneLayout.queryPaneHeight = state.queryPaneHeight;
+    intendedQueryPaneHeight = state.queryPaneHeight;
   }
 }
 
