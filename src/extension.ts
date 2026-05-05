@@ -706,6 +706,7 @@ ${innerContent}
       // (e.g. by connectAndListTables), so refresh its label with the count.
       if (category.label !== `${category.baseLabel} (${cached.length})`) {
         category.setCount(cached.length);
+        category.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
         this._onDidChangeTreeData.fire(category);
       }
       return cached;
@@ -737,6 +738,7 @@ ${innerContent}
       );
       this.entityCache.set(cacheKey, items);
       category.setCount(items.length);
+      category.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
       this._onDidChangeTreeData.fire(category);
 
       return items;
@@ -761,6 +763,7 @@ ${innerContent}
     if (cached) {
       if (sub.label !== `${sub.baseLabel} (${cached.length})`) {
         sub.setCount(cached.length);
+        sub.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
         this._onDidChangeTreeData.fire(sub);
       }
       return cached;
@@ -806,6 +809,7 @@ ${innerContent}
 
       this.tableDetailCache.set(cacheKey, items);
       sub.setCount(items.length);
+      sub.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
       this._onDidChangeTreeData.fire(sub);
       return items;
     } catch {
